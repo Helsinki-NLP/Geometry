@@ -19,32 +19,6 @@ import sys
 
 
 
-
-
-
-def index_w2s(sents,wsample):
-    #makes a dictionary. Given a word/list of words point to all sentences (&position) where it appears
-    w2s={word:[] for word in wsample} # word:[(sent1,pos1),(sent2,pos2)]
-    for i,sentence in enumerate(sents):
-        for j,word in enumerate(sentence):
-            if word in wsample:
-                w2s[word].append((i,j))
-    return 
-
-
-def self_similarity(word,embeddings):
-    n = len(occurences)
-
-    pass
-
-def intra_similarity():
-    pass
-
-def max_expl_var():
-    pass
-
-
-
 #####     MT MODEL EMBEDDINGS:     #####
 
 def apply_bpe(sents_to_bpe, bpe_model):
@@ -123,7 +97,7 @@ def get_encodings_from_onmt_model(sents, opt):
                              readers=[reader],
                              dirs=[None],
                              sort_key=inputters.str2sortkey['text'])
-    bsize=round(len(sents)/100)
+    bsize=max(1024,round(len(sents)/100))
     data_iter = inputters.OrderedIterator(
             dataset=data, device=cur_device,
             batch_size=bsize, train=False, sort=False,
@@ -150,9 +124,41 @@ def get_encodings_from_onmt_model(sents, opt):
                 dump_dict[layer][key] = torch.cat((dump_dict[layer][key], layers[layer][key]),dim=0)
                 print(dump_dict[layer][key].shape)
     
-return dump_dict
+    return dump_dict
 
 ########################################
+
+def index_w2s(sents,wsample):
+    #makes a dictionary. Given a word/list of words point to all sentences (&position) where it appears
+    w2s={word:[] for word in wsample} # word:[(sent1,pos1),(sent2,pos2)]
+    for i,sentence in enumerate(sents):
+        for j,word in enumerate(sentence):
+            if word in wsample:
+                w2s[word].append((i,j))
+    return w2s
+
+def extract_embeddings(w2s,mt_embedds):
+    embedds = {}
+    for word,occur in w2s.items():
+        sentidx = [i[0] for i in occur]
+        for layer in mt_embedds:
+            for key in mt_embedds[layer]:
+                embedds.setdefault(word,{}).setdefault(layer,{}).setdefault(key,torch.Tensor())
+                embedds[word][layer][key] = mt_embedds[layer][key][sentidx,:,:]
+                # mt_embedds['layer0']['normalized'][sentidx,:,:]
+    return embedds
+
+def self_similarity(word,embeddings):
+    n = len(occurences)
+
+    pass
+
+def intra_similarity():
+    pass
+
+def max_expl_var():
+    pass
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -180,10 +186,17 @@ if __name__ == '__main__':
     
     wsample = random.sample(bow,2500) # around 10% of vocab size
 
-    w2s = index_w2s(sents,wsample)
+    w2s = index_w2s(sents,wsample[0:5])
     
-    #load/compute embeddings    
-    get_encodings_from_onmt_model(sents,opt)
+    #load/compute embeddings from MT model
+    all_mt_embedds = get_encodings_from_onmt_model(sents[0:5000],opt) # for making it easier
+    bpedsents = all_mt_embedds.pop('sentences')
+    # TODO: find position in the bped version + make a decision on how to treat those embeddings
 
+    w2s = {'42': [(132, 8), (190, 18), (589, 4), (3662, 6), (3736, 5)], 
+           'floor': [(704, 6), (961, 5), (1125, 6), (1195, 7), (1222, 9), (1452, 6), (1485, 14)]}
+    mt_embedds = extract_embeddings(w2s,all_mt_embedds)
+
+    self_similarity(word,mt_embedds)
 
 

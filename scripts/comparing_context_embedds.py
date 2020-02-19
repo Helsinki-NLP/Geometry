@@ -9,7 +9,8 @@ PUHTI bash:
     export PATH=/projappl/project_2000945/bin:$PATH
     conda activate senteval
     cd /projappl/project_2001970/Geometry/scripts
-    ipython
+    python comparing_context_embedds.py 
+    #ipython
 '''
 #
 #
@@ -59,11 +60,6 @@ def pad_batch(layers,longest_sent, pading_value=0):
     return layers
 
 def get_encodings_from_onmt_model(sents, opt):
-    #################### TAKE AWAY!!!!!!!:
-    opt.model = "/scratch/project_2001970/AleModel/tr.6l.8ah.en-de_step_200000.pt" # TAKE AWAY overwrites
-    opt.apply_bpe = True # TAKE AWAY overwrites
-    opt.bpe_model = "/scratch/project_2001970/AleModel/bpe-model.de-en-35k.wmt19-news-para.norm.tok.tc" # TAKE AWAY overwrites
-    #--------------
 
     # STEP: get rid of empty lines
     samples = [sent if sent != [] else ['.'] for sent in sents]
@@ -141,7 +137,7 @@ def index_w2s(sents,wsample):
                 new_sentences.append(i)
     return w2s, set(new_sentences)
 
-def extract_embeddings(w2s,all_mt_embedds):
+def extract_embeddings(all_mt_embedds,w2s =None):
     ''' given a dict and the embeddings, creates a dict of the form 
             {'word': {'layeri': {'normalized': [tensor], 'unnormalized': [tensor]} } } '''
     embedds = {}
@@ -154,6 +150,71 @@ def extract_embeddings(w2s,all_mt_embedds):
                 embedds[word][layer][key] = all_mt_embedds[layer][key][sentidx,wordidx,:]
                 
     return embedds
+
+def merge_bped_embedds(bpedsents, all_mt_embedds, w2s=None):
+    '''find position in the bped version + average those embeddings'''
+    tokd_bpedsents=[]
+    for sent in bpedsents:
+        sent = sent.strip()
+        sent = sent.split(' ')
+        tokd_bpedsents.append(sent)
+    
+    import re
+    from itertools import groupby
+    from operator import itemgetter
+
+    for sentidx, sent in enumerate(tokd_bpedsents):
+        # find the bpe splits
+         # TODO: add special chars in the regex!!!
+        subwordunits=re.findall(r"\w+@@",bpedsents[sentidx])
+        temp=[]
+        for subword in subwordunits:
+            temp.append(sent.index(subword))
+        
+        subwordidx = []
+        for k, g in groupby(enumerate(temp), lambda x: x[0]-x[1]):
+            subwordidx.append(list(map(itemgetter(1), g)))
+        for k in range(len(subwordidx)): 
+            subwordidx[k].append(subwordidx[k][-1]+1)
+
+        # average the corresponding embeddings:
+        for layer in all_mt_embedds:
+            for embs_type in all_mt_embedds[layer]:
+                for aidis in subwordidx:
+                    mean_vector = torch.mean(all_mt_embedds[layer][embs_type][sentidx,aidis,:], dim=0) # compute mean emb
+                    all_mt_embedds[layer][embs_type][sentidx,aidis,:] = mean_vector  # replace all subword embs, for the mean_emb 
+                    # cannot delete a column like this!
+                    #all_mt_embedds[layer][embs_type][sentidx,:,:]  = torch.cat((all_mt_embedds[layer][embs_type][sentidx,:aidis[0],:],all_mt_embedds[layer][embs_type][sentidx,aidis[-1]:,:] ) )
+        
+        # correct index shifting
+        if w2s:
+            # unBPE the splitted words in the current sentence 
+            unsplitted_words = []
+            for subword in subwordidx:
+                this_subword=[]
+                for j in subword:
+                    this_subword.append(''.join(sent[j].strip('@@')))
+                unsplitted_words.append(''.join(this_subword))
+
+            # replace one of the bpe occurences in the sentence    
+            for chunk,w in enumerate(subwordidx):
+                sent[w[0]] = unsplitted_words[chunk] 
+
+            #replace index in w2s
+            for word,position in w2s.items():
+                ss,ww = zip(*position)
+                indices = [i for i, x in enumerate(ss) if x == sentidx] 
+                for i in indices:
+                    ##import ipdb; ipdb.set_trace()
+                    if word in sent:
+                        w2s[word][i] = (w2s[word][i][0], sent.index(word))
+                    else:
+                        print('Failed to find word < {0} > in sentence < {1} > \n Original sentence < {2} > '.format(word, sent, tokd_bpedsents[sentidx]) ) 
+                        import ipdb; ipdb.set_trace()
+                    #prev_splits_count=0
+                    #w2s[word][i] = tokd_bpedsents[sent_wordid[0]][sent_wordid[1]+prev_splits_count]
+
+    return all_mt_embedds, w2s
 
 def self_similarity(word,embs_type):
     n, hdim = embs_type['normalized'].shape 
@@ -187,6 +248,11 @@ if __name__ == '__main__':
     parser.add_argument("--bpe_model", required=False,      
                         help='path to read onmt_model')
     opt = parser.parse_args() 
+    #################### TAKE AWAY!!!!!!!:
+    opt.model = "/scratch/project_2001970/AleModel/tr.6l.8ah.en-de_step_200000.pt" # TAKE AWAY overwrites
+    opt.apply_bpe = True # TAKE AWAY overwrites
+    opt.bpe_model = "/scratch/project_2001970/AleModel/bpe-model.de-en-35k.wmt19-news-para.norm.tok.tc" # TAKE AWAY overwrites
+    #--------------
     # TODO: make it more general so the data can be given as an argument from command line, instead of hardcoding STS
     STS_path = '/scratch/project_2001970/SentEval/data/allSTS.txt'
     with open(STS_path, 'r') as f:
@@ -217,42 +283,15 @@ if __name__ == '__main__':
     #load/compute embeddings from MT model
     all_mt_embedds = get_encodings_from_onmt_model(new_sentences,opt) # get MT-embedds from set of sentences with the words needed
     bpedsents = all_mt_embedds.pop('sentences')
-    # TODO: send to a function:
-    # find position in the bped version + average those embeddings
-
-    #def average_subword_embedds(bpedsents,all_mt_embedds):
-    tokd_bpedsents=[]
-    for sent in bpedsents:
-        sent = sent.strip()
-        sent = sent.split(' ')
-        tokd_bpedsents.append(sent)
     
-    import re
-    from itertools import groupby
-    from operator import itemgetter
+    # merge embeddings from splitted words (bpe)
+    if opt.bpe_model:
+        all_mt_embedds, w2s = merge_bped_embedds(bpedsents, all_mt_embedds, w2s)
 
-    for sentidx, sent in enumerate(tokd_bpedsents):
-        # find the bpe splits
-        subwordunits=re.findall(r"\w+@@",bpedsents[sentidx]) 
-        temp=[]
-        for subword in subwordunits:
-            temp.append(sent.index(subword))
-        
-        subwordidx = []
-        for k, g in groupby(enumerate(temp), lambda x: x[0]-x[1]):
-            subwordidx.append(list(map(itemgetter(1), g)))
-        for k in range(len(subwordidx)): 
-            subwordidx[k].append(subwordidx[k][-1]+1)
-
-        # average the corresponding embeddings:
-        import ipdb; ipdb.set_trace()
-        for aidis in subwordidx:
-            torch.mean(all_mt_embedds['layer0']['normalized'][sentidx,aidis,:], dim=0).shape
-        print(sent)
-
-
-
+    # get embeddings of the word positions
     mt_embedds = extract_embeddings(w2s,all_mt_embedds)
+    
+    import ipdb; ipdb.set_trace()
     
     # SELF-SIMILARITY
     self_similarities = {}
@@ -267,12 +306,10 @@ if __name__ == '__main__':
     ssample_mt_embedds = get_encodings_from_onmt_model(ssample,opt) # get MT-embedds from set of sentences with the words needed
     bpedssample = ssample_mt_embedds.pop('sentences')
     
+    # merge embeddings from splitted words (bpe)
+    if opt.bpe_model:
+        ssample_mt_embedds, _ = merge_bped_embedds(bpedsents, ssample_mt_embedds)
     import ipdb; ipdb.set_trace()
-    tokd_bpedssample=[]
-    for sent in bpedssample:
-        sent = sent.strip()
-        sent = sent.split(' ')
-        tokd_bpedssample.append(sent)
 
     intra_similarities = {}
     

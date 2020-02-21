@@ -120,7 +120,7 @@ def get_encodings_from_onmt_model(sents, opt):
                 dump_dict.setdefault(layer,{}).setdefault(key,torch.Tensor())
                 #print(dump_dict[layer][key].shape, layers[layer][key].shape)
                 dump_dict[layer][key] = torch.cat((dump_dict[layer][key], layers[layer][key]),dim=0)
-                print(dump_dict[layer][key].shape)
+                #print(dump_dict[layer][key].shape)
     
     return dump_dict
 
@@ -137,12 +137,11 @@ def index_w2s(sents,wsample):
                 new_sentences.append(i)
     return w2s, set(new_sentences)
 
-def extract_embeddings(all_mt_embedds,w2s =None):
+def extract_embeddings(w2s, all_mt_embedds):
     ''' given a dict and the embeddings, creates a dict of the form 
             {'word': {'layeri': {'normalized': [tensor], 'unnormalized': [tensor]} } } '''
     embedds = {}
     for word,occur in w2s.items():
-        #sentidx = [i[0] for i in occur]
         sentidx, wordidx = zip(*occur)
         for layer in all_mt_embedds:
             for key in all_mt_embedds[layer]:
@@ -209,8 +208,8 @@ def merge_bped_embedds(bpedsents, all_mt_embedds, w2s=None):
                     if word in sent:
                         w2s[word][i] = (w2s[word][i][0], sent.index(word))
                     else:
-                        print('Failed to find word < {0} > in sentence < {1} > \n Original sentence < {2} > '.format(word, sent, tokd_bpedsents[sentidx]) ) 
-                        import ipdb; ipdb.set_trace()
+                        print('Failed to find word < {0} > in sentence < {1} > \n Original sentence < {2} > '.format(word, sent, bpedsents[sentidx]) ) 
+                        #import ipdb; ipdb.set_trace()
                     #prev_splits_count=0
                     #w2s[word][i] = tokd_bpedsents[sent_wordid[0]][sent_wordid[1]+prev_splits_count]
 

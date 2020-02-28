@@ -32,6 +32,7 @@ def apply_bpe(sents_to_bpe, bpe_model):
         bpe_model (str): path to the location of the BPE model
     '''
     PATH_TO_BPE="/projappl/project_2000945/subword-nmt/subword_nmt" 
+    PATH_TO_BPE="/projappl/project_2001970/subword-nmt/subword_nmt" 
     sys.path.insert(0, PATH_TO_BPE)                                         
     from apply_bpe import BPE 
     import codecs
@@ -161,11 +162,11 @@ def merge_bped_embedds(bpedsents, all_mt_embedds, w2s=None):
     import re
     from itertools import groupby
     from operator import itemgetter
-
+    
     for sentidx, sent in enumerate(tokd_bpedsents):
         # find the bpe splits
-         # TODO: add special chars in the regex!!!
-        subwordunits=re.findall(r"\w+@@",bpedsents[sentidx])
+        # TODO: add special chars in the regex!!!
+        subwordunits=re.findall(r"\S+@@",bpedsents[sentidx])
         temp=[]
         for subword in subwordunits:
             temp.append(sent.index(subword))
@@ -209,7 +210,7 @@ def merge_bped_embedds(bpedsents, all_mt_embedds, w2s=None):
                         w2s[word][i] = (w2s[word][i][0], sent.index(word))
                     else:
                         print('Failed to find word < {0} > in sentence < {1} > \n Original sentence < {2} > '.format(word, sent, bpedsents[sentidx]) ) 
-                        #import ipdb; ipdb.set_trace()
+                        import ipdb; ipdb.set_trace()
                     #prev_splits_count=0
                     #w2s[word][i] = tokd_bpedsents[sent_wordid[0]][sent_wordid[1]+prev_splits_count]
 
@@ -270,7 +271,7 @@ if __name__ == '__main__':
     ssample_idx = [random.randint(0,len(sents)-1) for i in range(500)] 
     ssample = [sents[idx] for idx in ssample_idx] 
 
-    w2s, new_sentences_idx = index_w2s(sents,wsample[0:5])
+    w2s, new_sentences_idx = index_w2s(sents,wsample[0:15])
     new_sentences = [sents[idx] for idx in new_sentences_idx]
     #UPDATE w2s sentence index, to match the smaller subset of sentences
     for key, val in w2s.items(): 

@@ -219,16 +219,21 @@ def merge_bped_embedds(bpedsents, all_mt_embedds, w2s=None):
 
 def self_similarity(word,embs_type):
     n, hdim = embs_type['normalized'].shape 
-    current_selfsim = {'normalized':0, 'unnormalized':0}
-    for key, embs in embs_type.items():
-        # fill matrix of cosine_similarities
-        for i in range(n):
-            for j in range(i+1,n):
-                current_selfsim[key] += torch.cosine_similarity(embs[i],embs[j],dim=0)
-                #print(word, i,j,current_selfsim)
+    current_selfsim = torch.Tensor([0,0])
+    import ipdb; ipdb.set_trace()
+    # fill matrix of cosine_similarities
+    for i in range(n):
+        for j in range(i+1,n):
+            current_selfsim[0] += torch.cosine_similarity(embs_type['normalized'][i],  embs_type['normalized'][j],  dim=0) # ['normalized']
+            current_selfsim[1] += torch.cosine_similarity(embs_type['unnormalized'][i],embs_type['unnormalized'][j],dim=0) # ['unnormalized']
+    #for key, embs in embs_type.items():
+    #    for i in range(n):
+    #        for j in range(i+1,n):
+    #           current_selfsim[key] += torch.cosine_similarity(embs[i],embs[j],dim=0)
+            #print(word, i,j,current_selfsim)
     coeff = 1/(n**2 - n)
-    current_selfsim['normalized']   *= coeff
-    current_selfsim['unnormalized'] *= coeff
+    current_selfsim[0] *= coeff # ['normalized']
+    current_selfsim[1] *= coeff # ['unnormalized']
     return current_selfsim
 
 def intra_similarity():
@@ -296,21 +301,34 @@ if __name__ == '__main__':
     
     
     # SELF-SIMILARITY
+    w2s_4_selfsim = {w:pos for w,pos in w2s.items() if len(pos)>1}
     self_similarities = {}
-    for word, embedds in mt_embedds.items():
-        if embedds['layer0']['normalized'].shape[0] > 1:
-            for layer,embs_type in embedds.items():
-                print('entered using:', word,layer)
-                self_similarities.setdefault(word,{}).setdefault(layer,{})
-                self_similarities[word][layer] = self_similarity(word, embs_type)
+    numlayers = len(mt_embedds[list(w2s_4_selfsim.keys())[0]])
+    tensor_selfsimilarities = torch.zeros((len(w2s_4_selfsim),numlayers,2)) # [word_index, num_layers, |{normalized,unnormalized}| ]
+    
+    for wordid, word in enumerate(w2s_4_selfsim):
+        for layerid, (layer,embs_type) in enumerate(mt_embedds[word].items()):
+            print('computing self similarity for ', word,layer)
+            tensor_selfsimilarities[wordid,layerid,:] = self_similarity(word, embs_type) 
+            
     
 
+    #for word, embedds in mt_embedds.items():
+    #    if embedds['layer0']['normalized'].shape[0] > 1:
+    #        for layer,embs_type in embedds.items():
+    #            print('entered using:', word,layer)
+    #            self_similarities.setdefault(word,{}).setdefault(layer,{})
+    #            self_similarities[word][layer] = self_similarity(word, embs_type)
+    
+    # AVERAGE EMBEDINGS BY LAYER + PRINT VALUES  
     for word, emb_type in self_similarities.items(): 
-        print('\t ### '+word+' ### \t')
+        print('### \t ### '+word+' ### \t ###')
         print('LAYER \t', 'NORMALIZED \t \t', 'UNNORMALIZED \t')
         for layername, layer in emb_type.items():
             print(layername+'\t', layer['normalized'].tolist(),'\t', layer['unnormalized'].tolist())
     
+    # CREATE PLOT 
+
     import ipdb; ipdb.set_trace()
 
     # INTRA-SENTENCE SIMILARITY    

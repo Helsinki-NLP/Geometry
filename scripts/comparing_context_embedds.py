@@ -8,7 +8,7 @@ PUHTI bash:
     export PYTHONUSERBASE=/projappl/project_2000945
     export PATH=/projappl/project_2000945/bin:$PATH
     conda activate senteval
-    cd /projappl/project_2001970/Geometry/scripts
+    cd /projappl/project_2001970/Geometry_jrvc/scripts
     python comparing_context_embedds.py 
     #ipython
 '''
@@ -19,6 +19,7 @@ import random
 import argparse
 import sys 
 import torch
+import re
 
 #import bertify
 
@@ -159,7 +160,6 @@ def merge_bped_embedds(bpedsents, all_mt_embedds, w2s=None):
         sent = sent.split(' ')
         tokd_bpedsents.append(sent)
     
-    import re
     from itertools import groupby
     from operator import itemgetter
     
@@ -168,10 +168,11 @@ def merge_bped_embedds(bpedsents, all_mt_embedds, w2s=None):
         # find the bpe splits
         # TODO: add special chars in the regex!!!
         subwordunits=re.findall(r"\S+@@",bpedsents[sentidx])
-        temp=[]
+        temp=[-1]
         for subword in subwordunits:
-            temp.append(sent.index(subword))
-        
+            temp.append(sent.index(subword,temp[-1]+1))
+        temp.remove(-1)
+
         subwordidx = []
         for k, g in groupby(enumerate(temp), lambda x: x[0]-x[1]):
             subwordidx.append(list(map(itemgetter(1), g)))
@@ -270,7 +271,8 @@ if __name__ == '__main__':
     bow = set()
     for sent in samples:
         sent = sent.strip()
-        sent = sent.split(' ')
+        #sent = sent.split(' ')
+        sent = re.findall(r'[\w]+|\.|,|\?|\!|;|:|\'|\(|\)|/',sent)
         bow.update(set(sent)) 
         sents.append(sent)
     
@@ -310,6 +312,15 @@ if __name__ == '__main__':
                 self_similarities.setdefault(word,{}).setdefault(layer,{})
                 self_similarities[word][layer] = self_similarity(word, embs_type)
     
+
+    for word, emb_type in self_similarities.items(): 
+        print('\t ### '+word+' ### \t')
+        print('LAYER \t', 'NORMALIZED \t \t', 'UNNORMALIZED \t')
+        for layername, layer in emb_type.items():
+            print(layername+'\t', layer['normalized'].tolist(),'\t', layer['unnormalized'].tolist())
+    
+    import ipdb; ipdb.set_trace()
+
     # INTRA-SENTENCE SIMILARITY    
     ssample_mt_embedds = get_encodings_from_onmt_model(ssample,opt) # get MT-embedds from set of sentences with the words needed
     bpedssample = ssample_mt_embedds.pop('sentences')

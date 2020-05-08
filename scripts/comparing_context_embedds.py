@@ -20,11 +20,14 @@ import argparse
 import sys 
 import torch
 import re
+
+
+from copy import deepcopy
+
 import functools
 import operator
 from collections import Counter
 import time
-#import bertify
 
 
 #####     MT MODEL EMBEDDINGS:     #####
@@ -166,6 +169,7 @@ def merge_bped_embedds(bpedsents, all_mt_embedds, w2s=None):
     from itertools import groupby
     from operator import itemgetter
     
+    repeated_indices = []
     for sentidx, sent in enumerate(tokd_bpedsents):
         # find the bpe splits
         # TODO: add special chars in the regex!!!
@@ -174,6 +178,7 @@ def merge_bped_embedds(bpedsents, all_mt_embedds, w2s=None):
         for subword in subwordunits:
             temp.append(sent.index(subword,temp[-1]+1))
         temp.remove(-1)
+        repeated_indices.append(deepcopy(temp))
 
         subwordidx = []
         for k, g in groupby(enumerate(temp), lambda x: x[0]-x[1]):
@@ -218,7 +223,7 @@ def merge_bped_embedds(bpedsents, all_mt_embedds, w2s=None):
                     #prev_splits_count=0
                     #w2s[word][i] = tokd_bpedsents[sent_wordid[0]][sent_wordid[1]+prev_splits_count]
 
-    return all_mt_embedds, w2s
+    return all_mt_embedds, w2s, repeated_indices
 
 def self_similarity(word,embs_type):
     n, hdim = embs_type['normalized'].shape 
@@ -239,8 +244,14 @@ def self_similarity(word,embs_type):
     current_selfsim[1] *= coeff # ['unnormalized']
     return current_selfsim
 
-def intra_similarity():
-    pass
+def intra_similarity(sent_embs):
+    sent_len = len(sent_embs)
+    mean_emb = torch.mean(sent_embs, dim=0)
+    current_intrasim = 0
+    for i in range(sent_len):
+        current_intrasim += torch.cosine_similarity(mean_emb, sent_embs[i, :], dim=0)
+    current_intrasim *= 1 / sent_len
+    return current_intrasim
 
 def max_expl_var():
     pass
@@ -310,15 +321,24 @@ if __name__ == '__main__':
     
     # merge embeddings from splitted words (bpe)
     if opt.bpe_model:
-        all_mt_embedds, w2s = merge_bped_embedds(bpedsents, all_mt_embedds, w2s)
+        all_mt_embedds, w2s, _ = merge_bped_embedds(bpedsents, all_mt_embedds, w2s)
 
     # get embeddings of the word positions
     print('Extracting word embeddings')
     mt_embedds = extract_embeddings(w2s,all_mt_embedds)
     
-    
+    #import ipdb; ipdb.set_trace()
     
     # SELF-SIMILARITY
+
+    self_similarities = {}
+    for word, embedds in mt_embedds.items():
+        if embedds['layer0']['normalized'].shape[0] > 1:
+            for layer,embs_type in embedds.items():
+                #print('entered using:', word,layer)
+                self_similarities.setdefault(word,{}).setdefault(layer,{})
+                self_similarities[word][layer] = self_similarity(word, embs_type)
+
     print('Computing self-similarities...')
     w2s_4_selfsim = {w:pos for w,pos in w2s.items() if len(pos)>1}
     self_similarities = {}
@@ -359,10 +379,10 @@ if __name__ == '__main__':
         print('LAYER \t', 'NORMALIZED \t \t', 'UNNORMALIZED \t')
         for layername, layer in emb_type.items():
             print(layername+'\t', layer['normalized'].tolist(),'\t', layer['unnormalized'].tolist())
-    
-    # CREATE PLOT 
 
-    import ipdb; ipdb.set_trace()
+
+    #import ipdb; ipdb.set_trace()
+
 
     # INTRA-SENTENCE SIMILARITY    
     ssample_mt_embedds = get_encodings_from_onmt_model(ssample,opt) # get MT-embedds from set of sentences with the words needed
@@ -370,19 +390,35 @@ if __name__ == '__main__':
     
     # merge embeddings from splitted words (bpe)
     if opt.bpe_model:
-        ssample_mt_embedds, _ = merge_bped_embedds(bpedsents, ssample_mt_embedds)
-    import ipdb; ipdb.set_trace()
+        ssample_mt_embedds, _, repeated_indices = merge_bped_embedds(bpedsents, ssample_mt_embedds)
+        
+        #for sentence, indices in zip(bpedsents, repeated_indices):
+        #    print(indices, sentence)
+
+
+    #import ipdb; ipdb.set_trace()
 
     intra_similarities = {}
-    
-    
+    tensor_intrasimilarities = torch.zeros((len(bpedsents), 7, 2))
+    for lid, layer in enumerate(['layer0', 'layer1', 'layer2', 'layer3', 'layer4', 'layer5', 'layer6']):
+        for nid, norm in enumerate(['normalized', 'unnormalized']):
+            for sid, sentence in enumerate(bpedsents):
+                tok_sentence = sentence.strip().split(' ')
+                bpe_length = len(tok_sentence)
+                sent_emb = ssample_mt_embedds[layer][norm][sid,0:bpe_length,:]
+                #import ipdb; ipdb.set_trace()
+                unique_indices = list(set(range(bpe_length)).difference(set(repeated_indices[sid])))
+                sent_emb = sent_emb[unique_indices,:]
+                tensor_intrasimilarities[sid, lid, nid] = intra_similarity(sent_emb)
+   
+    #print(tensor_intrasimilarities[0,:,:])
 
     #load/compute embeddings from Bert
     # BERT: 
-    bert_sample = random.sample(sents,1)[0]
-    print(bert_sample)
-    bertify.tokenize(bert_sample)
-    bertify.encode(bert_sample)
+    #bert_sample = random.sample(sents,1)[0]
+    #print(bert_sample)
+    #bertify.tokenize(bert_sample)
+    #bertify.encode(bert_sample)
 
 
 

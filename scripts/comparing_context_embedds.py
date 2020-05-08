@@ -9,7 +9,7 @@ PUHTI bash:
     export PATH=/projappl/project_2000945/bin:$PATH
     conda activate senteval
     cd /projappl/project_2001970/Geometry_jrvc/scripts
-    python comparing_context_embedds.py 
+    python comparing_context_embedds.py --sample_size 500
     #ipython
 '''
 #
@@ -20,8 +20,14 @@ import argparse
 import sys 
 import torch
 import re
+
+
 from copy import deepcopy
-#import bertify
+
+import functools
+import operator
+from collections import Counter
+import time
 
 
 #####     MT MODEL EMBEDDINGS:     #####
@@ -221,16 +227,21 @@ def merge_bped_embedds(bpedsents, all_mt_embedds, w2s=None):
 
 def self_similarity(word,embs_type):
     n, hdim = embs_type['normalized'].shape 
-    current_selfsim = {'normalized':0, 'unnormalized':0}
-    for key, embs in embs_type.items():
-        # fill matrix of cosine_similarities
-        for i in range(n):
-            for j in range(i+1,n):
-                current_selfsim[key] += torch.cosine_similarity(embs[i],embs[j],dim=0)
-                #print(word, i,j,current_selfsim)
+    current_selfsim = torch.Tensor([0,0])
+    #import ipdb; ipdb.set_trace()
+    # fill matrix of cosine_similarities
+    for i in range(n):
+        for j in range(i+1,n):
+            current_selfsim[0] += torch.cosine_similarity(embs_type['normalized'][i],  embs_type['normalized'][j],  dim=0) # ['normalized']
+            current_selfsim[1] += torch.cosine_similarity(embs_type['unnormalized'][i],embs_type['unnormalized'][j],dim=0) # ['unnormalized']
+    #for key, embs in embs_type.items():
+    #    for i in range(n):
+    #        for j in range(i+1,n):
+    #           current_selfsim[key] += torch.cosine_similarity(embs[i],embs[j],dim=0)
+            #print(word, i,j,current_selfsim)
     coeff = 1/(n**2 - n)
-    current_selfsim['normalized']   *= coeff
-    current_selfsim['unnormalized'] *= coeff
+    current_selfsim[0] *= coeff # ['normalized']
+    current_selfsim[1] *= coeff # ['unnormalized']
     return current_selfsim
 
 def intra_similarity(sent_embs):
@@ -256,6 +267,8 @@ if __name__ == '__main__':
                         help="Does your model needs BPEd data as input?")
     parser.add_argument("--bpe_model", required=False,      
                         help='path to read onmt_model')
+    parser.add_argument("--sample_size", required=False, type=int, default=2500,      
+                        help='size of the samle to be extracted')
     opt = parser.parse_args() 
     #################### TAKE AWAY!!!!!!!:
     opt.model = "/scratch/project_2001970/AleModel/tr.6l.8ah.en-de_step_200000.pt" # TAKE AWAY overwrites
@@ -263,6 +276,7 @@ if __name__ == '__main__':
     opt.bpe_model = "/scratch/project_2001970/AleModel/bpe-model.de-en-35k.wmt19-news-para.norm.tok.tc" # TAKE AWAY overwrites
     #--------------
     # TODO: make it more general so the data can be given as an argument from command line, instead of hardcoding STS
+    print('loading data samples')
     STS_path = '/scratch/project_2001970/SentEval/data/allSTS.txt'
     with open(STS_path, 'r') as f:
         samples = f.readlines()
@@ -275,13 +289,23 @@ if __name__ == '__main__':
         sent = re.findall(r'[\w]+|\.|,|\?|\!|;|:|\'|\(|\)|/',sent)
         bow.update(set(sent)) 
         sents.append(sent)
-    
-    wsample = random.sample(bow,2500) # sample words: around 10% of vocab size
+
+    import ipdb; ipdb.set_trace()
+    print('Making bow that occured more than 5 times')
+    allwords=Counter(functools.reduce(operator.iconcat, sents, []))
+    bow5x= [key for key,count in allwords.items() if count > 4]
+    #clean symbols
+    for sym in [',', '.', ':','?','!',';','_']:
+        _ = bow5x.pop(bow5x.index(sym))
+    print('Sampling...')
+     # sample words for self-similarity
+    wsample = random.sample(bow5x,opt.sample_size)
     # sample sentences for intra sent similarity
     ssample_idx = [random.randint(0,len(sents)-1) for i in range(500)] 
     ssample = [sents[idx] for idx in ssample_idx] 
 
-    w2s, new_sentences_idx = index_w2s(sents,wsample[0:15])
+    print('generating w2s dictionary')
+    w2s, new_sentences_idx = index_w2s(sents,wsample)
     new_sentences = [sents[idx] for idx in new_sentences_idx]
     #UPDATE w2s sentence index, to match the smaller subset of sentences
     for key, val in w2s.items(): 
@@ -291,6 +315,7 @@ if __name__ == '__main__':
             w2s[key][i] = (new_idx, tpl[1])
 
     #load/compute embeddings from MT model
+    print('Running sentences containing sampled words through the mt-encoder')
     all_mt_embedds = get_encodings_from_onmt_model(new_sentences,opt) # get MT-embedds from set of sentences with the words needed
     bpedsents = all_mt_embedds.pop('sentences')
     
@@ -299,12 +324,13 @@ if __name__ == '__main__':
         all_mt_embedds, w2s, _ = merge_bped_embedds(bpedsents, all_mt_embedds, w2s)
 
     # get embeddings of the word positions
+    print('Extracting word embeddings')
     mt_embedds = extract_embeddings(w2s,all_mt_embedds)
     
     #import ipdb; ipdb.set_trace()
     
     # SELF-SIMILARITY
-    '''
+
     self_similarities = {}
     for word, embedds in mt_embedds.items():
         if embedds['layer0']['normalized'].shape[0] > 1:
@@ -312,16 +338,51 @@ if __name__ == '__main__':
                 #print('entered using:', word,layer)
                 self_similarities.setdefault(word,{}).setdefault(layer,{})
                 self_similarities[word][layer] = self_similarity(word, embs_type)
-    
 
+    print('Computing self-similarities...')
+    w2s_4_selfsim = {w:pos for w,pos in w2s.items() if len(pos)>1}
+    self_similarities = {}
+    numlayers = len(mt_embedds[list(w2s_4_selfsim.keys())[0]])
+    tensor_selfsimilarities = torch.zeros((len(w2s_4_selfsim),numlayers,2)) # [word_index, num_layers, |{normalized,unnormalized}| ]
+    
+    for wordid, word in enumerate(w2s_4_selfsim):
+        print('computing self similarity for ', word)
+        for layerid, (layer,embs_type) in enumerate(mt_embedds[word].items()):
+            tensor_selfsimilarities[wordid,layerid,:] = self_similarity(word, embs_type) 
+            
+    import pickle
+    f1name='normalized'+str(opt.sample_size)+'.p'
+    f2name='unnormalized'+str(opt.sample_size)+'.p'
+    wordsfname='sampledwords'+str(opt.sample_size)+'.p'
+    normalized =tensor_selfsimilarities[:,:,0].numpy()                                                                  
+    unnormalized =tensor_selfsimilarities[:,:,1].numpy()
+
+    print("Saving normalized embeddings...")
+    pickle.dump(normalized,open(f1name,'wb'))
+    print("Saving unnormalized embeddings...")
+    pickle.dump(unnormalized,open(f2name,'wb'))
+    print("Saving sampled words")
+    pickle.dump(wsample,open(wordsfname,'wb'))
+
+    #norm=pickle.load(open("normalized500.p",'rb')) # will be loaded as an array
+    
+    #for word, embedds in mt_embedds.items():
+    #    if embedds['layer0']['normalized'].shape[0] > 1:
+    #        for layer,embs_type in embedds.items():
+    #            print('entered using:', word,layer)
+    #            self_similarities.setdefault(word,{}).setdefault(layer,{})
+    #            self_similarities[word][layer] = self_similarity(word, embs_type)
+    
+    # AVERAGE EMBEDINGS BY LAYER + PRINT VALUES  
     for word, emb_type in self_similarities.items(): 
-        print('\t ### '+word+' ### \t')
+        print('### \t ### '+word+' ### \t ###')
         print('LAYER \t', 'NORMALIZED \t \t', 'UNNORMALIZED \t')
         for layername, layer in emb_type.items():
             print(layername+'\t', layer['normalized'].tolist(),'\t', layer['unnormalized'].tolist())
-    '''
+
 
     #import ipdb; ipdb.set_trace()
+
 
     # INTRA-SENTENCE SIMILARITY    
     ssample_mt_embedds = get_encodings_from_onmt_model(ssample,opt) # get MT-embedds from set of sentences with the words needed

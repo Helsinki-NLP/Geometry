@@ -1,7 +1,3 @@
 ipdb
-pickle
-argparse
-re
-random
-functools
-operator
+argparse==1.4.0
+transformers==2.9.0

@@ -34,12 +34,15 @@ pip install -r requirements.txt
 
 ### Usage
 
-To replicate our experiments, you need to download the STS datasets. A straightforward way to do that is running
+To replicate our experiments, you will first need to clone [moses decoder](https://github.com/moses-smt/mosesdecoder.git)
 ```
-source getSTSdb.sh path/to/mosesdecoder
+git clone https://github.com/moses-smt/mosesdecoder.git
 ```
-You will need to clone [moses decoder](https://github.com/moses-smt/mosesdecoder.git) `git clone https://github.com/moses-smt/mosesdecoder.git`
-The previous script has been adapted from [SentEval](https://github.com/facebookresearch/SentEval).
+and to download the STS datasets - can do by running our adapted script from [SentEval](https://github.com/facebookresearch/SentEval):
+```
+git clone https://github.com/moses-smt/mosesdecoder.git
+```
+
 
 You can replicate our experiments by running: 
 ```

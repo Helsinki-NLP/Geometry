@@ -18,6 +18,7 @@ STS_subdirs=(["STS12"]="test-gold" ["STS13"]="test-gs" ["STS14"]="sts-en-test-gs
 
 
 MOSESTOKENIZER=$MOSES/tokenizer/tokenizer.perl
+LOWER=$MOSES/tokenizer/lowercase.perl
 
 for task in "${!STS_tasks[@]}";
 do
@@ -39,12 +40,22 @@ do
             mv $task_path/STS2016.gs.$sts_task.txt $task_path/STS.gs.$sts_task.txt
         fi
 
-
-
-        cut -f1 $task_path/$fname | $MOSESTOKENIZER -threads 8 -l en -no-escape | $LOWER > $task_path/tmp1
-        cut -f2 $task_path/$fname | $MOSESTOKENIZER -threads 8 -l en -no-escape | $LOWER > $task_path/tmp2
+        nlines=`wc -l $task_path/$fname | awk '{print $1}'`
+        echo "handling $task_path/$fname with $nlines lines"
+        cut -f1 $task_path/$fname | $MOSESTOKENIZER -threads 8 -l en -no-escape > $task_path/tmp1 # | $LOWER > $task_path/tmp1
+        cut -f2 $task_path/$fname | $MOSESTOKENIZER -threads 8 -l en -no-escape > $task_path/tmp2 # | $LOWER > $task_path/tmp2
         paste $task_path/tmp1 $task_path/tmp2 > $task_path/$fname
         rm $task_path/tmp1 $task_path/tmp2
     done
 
 done
+
+cat data/STS/STS1*/*.input.*txt | cut -f1 > tmp1
+cat data/STS/STS1*/*.input.*txt | cut -f2 > tmp2
+cat tmp1 tmp2 > data/STS/allSTS.txt
+rm tmp1 tmp2
+
+cat data/STS/STS1*/*.input.*txt | cut -f1 | $LOWER > tmp1
+cat data/STS/STS1*/*.input.*txt | cut -f2 | $LOWER > tmp2
+cat tmp1 tmp2 > data/STS/allSTS.lowercase.txt
+rm tmp1 tmp2

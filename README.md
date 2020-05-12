@@ -46,10 +46,11 @@ git clone https://github.com/moses-smt/mosesdecoder.git
 
 You can replicate our experiments by running: 
 ```
+source env/bin/activate
 python code/compare_context_embeddings.py
 ```
 
-You can also override the options using the command line options. 
+You can also override the default options using the command line flags. 
 This way, you can compute the measures for your own pretrained model. 
 `<when code is ready: paste the HELP message here>`
 

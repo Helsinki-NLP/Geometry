@@ -26,18 +26,29 @@ def get_parser():
     parser.add_argument("--debug_mode", action='store_true',
                         help="Launch ipdb debugger if script crashes.")
    
- 
     parser.add_argument("--intrasentsim_samplesize", "-intra_ss", required=False, type=int, default=500,
                         help='size of the sentence sample to be extracted for computing the intra-sentence similarity')
 
-    parser.add_argument("--model", required=False,
-                        help='path to read onmt_model')
+    parser.add_argument("--isotropycorrection_samplesize", required=False, type=int, default=1000,
+                        help='size of the words sample to be extracted for computing the isotropy correction factor')
 
+    parser.add_argument("--onmt_model", type=str, required=False,
+                        help='path to read onmt_model')
+  
+
+    parser.add_argument("--outdir", type=str, required=False, default='../results/',
+                        help='path to dir where outputs will be saved')
+
+    parser.add_argument("--huggingface_model", '-hfmodel', type=str, required=False,
+                        help="name of the huggingface model to use")
+
+    parser.add_argument("--bert_model",  "-bert", type=str, required=False, default="bert-base-uncased",
+                        help="Which BERT to use for contextualized embeddings [bert_base_uncased | bert_cased].")
 
     parser.add_argument("--selfsim_samplesize", "-self_ss",required=False, type=int, default=2500,
                         help='size of the words sample to extract for computing the self-similarity')
 
-    parser.add_argument("--sample_size", required=False, type=int, default=1000,
-                        help='size of the words sample to be extracted for computing the isotropy correction factor')
+    parser.add_argument("--save_results", action='store_true',
+                        help="if active, will save results into --outdir.")
 
     return parser

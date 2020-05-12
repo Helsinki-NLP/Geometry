@@ -40,7 +40,7 @@ git clone https://github.com/moses-smt/mosesdecoder.git
 ```
 and to download the STS datasets - can do by running our adapted script from [SentEval](https://github.com/facebookresearch/SentEval):
 ```
-git clone https://github.com/moses-smt/mosesdecoder.git
+source getSTSdb.sh /path/to/where/you/cloned/mosesdecoder
 ```
 
 

@@ -52,7 +52,27 @@ python code/compare_context_embeddings.py
 
 You can also override the default options using the command line flags. 
 This way, you can compute the measures for your own pretrained model. 
-`<when code is ready: paste the HELP message here>`
+```
+optional arguments:
+  -h, --help        show this help message and exit
+  --apply_bpe       Does your model needs BPEd data as input?
+  --bpe_model       path to read onmt_model
+  --cuda            Whether to use a cuda device.
+  --data_path       Dataset used to sample from. Defaults to STS datasets.
+  --debug_mode                     Launch ipdb debugger if script crashes.
+  --intrasentsim_samplesize        size of the sentence sample to be extracted for
+                                   computing the intra-sentence similarity
+  --isotropycorrection_samplesize  size of the words sample to be extracted for computing
+                                   the isotropy correction factor
+  --onmt_model        path to read onmt_model
+  --outdir            path to dir where outputs will be saved
+  --huggingface_model name of the huggingface model to use
+  --bert_model        Which BERT to use for contextualized embeddings
+                      [bert_base_uncased | bert_cased].
+  --selfsim_samplesize  size of the words sample to extract for computing the self-similarity
+  --save_results        if active, will save results into --outdir.
+
+```
 
 ### Contact
 Report bugs, contribute, give feedback or somply reach out. We are happy if you decide to contact us. 

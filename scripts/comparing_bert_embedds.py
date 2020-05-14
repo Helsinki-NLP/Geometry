@@ -250,7 +250,7 @@ if __name__ == '__main__':
    
     
     # AVERAGE-SIMILARITY OF EVERY LAYER
-    avg_similarities = {0:0, 1:0, 2:0, 3:0, 4:0, 5:0}
+    avg_similarities = {}
     to_pickle = numpy.zeros((12, 1))
     for layer in range(N_BERT_LAYERS):
         encodings = []

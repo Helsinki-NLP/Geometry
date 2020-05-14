@@ -71,7 +71,6 @@ class bertModel():
         logger('   correcting for BERT subword tokenization...')
         corrected_sentences = []
         for bert_encoding, bert_sentence in tqdm(zip(bert_encodings, bert_sentences)):
-            #print(bert_sentence)
 
             all_layers = []
             for layer in range(self.N_BERT_LAYERS):
@@ -100,9 +99,6 @@ class bertModel():
 
             corrected_sentences.append(all_layers)
            
-        #print('cbt: ', bert_sentences[0])
-        #print('cbt: ', corrected_sentences[0][0].shape)
-
         return corrected_sentences
 
 

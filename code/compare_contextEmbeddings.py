@@ -148,30 +148,53 @@ def BERT_compute_metrics(w2s,ssample,opt):
     bert_encodings = model.encode(bert_tokens)
     bert_encodings = model.correct_bert_tokenization(bert_encodings, bert_tokenization)
 
-    # get selfsim
+    # BASELINE WORD SIMILARITIES [FOR ANISOTROPY CORRECTION OF METRIC 1]
+    baselines_metric1 = np.zeros((1, model.N_BERT_LAYERS))
+    for layer in range(N_BERT_LAYERS):
+        all_embs_list = []
+        for word in w2s.keys():
+            for occurrence in w2s[word]:
+                sentence_id = occurrence[0]
+                word_id = occurrence[1]
+                all_embs_list.append(bert_encodings[sentence_id][layer][0,word_id,:])
+        
+        all_embs = torch.stack(all_embs_list, dim=0)
+        baselines_metric1[0,layer] = calculate_similarity(all_embs).item()
+
+
+    # SELF SIMILARITIES OF WORDS [METRIC 1] + MAXIMUM EXPLAINABLE VARIANCES [METRIC 3]
     self_similarities = {}
     mev={}
-    to_pickle = np.zeros((model.N_BERT_LAYERS, opt.selfsim_samplesize))
+    ss_to_pickle = np.zeros((opt.selfsim_samplesize, model.N_BERT_LAYERS))
+    mev_to_pickle = np.zeros((opt.selfsim_samplesize, model.N_BERT_LAYERS))
     wid = 0
     for word,occurrences in w2s.w2sdict.items():
         for layer in range(model.N_BERT_LAYERS):
             embs4thisword = torch.zeros((len(occurrences), model.ENC_DIM))
-            #encodings = []
+            
             for i, idx_tuple in enumerate(occurrences):
                 sentence_id = idx_tuple[0]
                 word_id = idx_tuple[1]
                 embs4thisword[i,:] = bert_encodings[sentence_id][layer][0,word_id,:]
-                #encodings.append(bert_encodings[sentence_id][layer][0,word_id,:])
 
             self_similarities.setdefault(word,{}).setdefault(layer,{})
-            self_similarities[word][layer] = Sim.self_similarity(embs4thisword).item()
+            #anisotropy-correct here:
+            self_similarities[word][layer] = Sim.self_similarity(embs4thisword).item() - baselines_metric1[0,layer]
             mev.setdefault(word,{}).setdefault(layer,{})
             mev[word][layer] = Sim.max_expl_var(embs4thisword)
-            to_pickle[layer,wid] = self_similarities[word][layer]
-            #print(word, layer, self_similarities[word][layer])
+
+            ss_to_pickle[wid,layer] = self_similarities[word][layer]
+            mev_to_pickle[wid,layer] = mev[word][layer]
+
         wid += 1
 
-    # INTRA-SENTENCE SIMILARITY
+    ss_to_pickle = ss_to_pickle[:, 0:wid]
+    mev_to_pickle = mev_to_pickle[:, 0:wid]
+
+
+     
+
+    # INTRA-SENTENCE SIMILARITY [METRIC 2]
     logger('   intra-sentence similarity ')
     #compute BERT embeddings
     ssample_bert_tokens, ssample_bert_tokenization =  model.tokenize(ssample)
@@ -188,20 +211,27 @@ def BERT_compute_metrics(w2s,ssample,opt):
     # DUMP PICKLES
     if opt.save_results:
         logger('   dumping similarity measures to '+str(opt.outdir) )
-        to_pickle = to_pickle[:, 0:wid]
         selfsimfname=str(opt.outdir)+'BERTselfsim_samplesize'+str(opt.selfsim_samplesize)+'.pkl'
-        pickle.dump(to_pickle, open(selfsimfname, 'bw'))
+        pickle.dump(ss_to_pickle, open(selfsimfname, 'bw'))
         
         intrasimfname=str(opt.outdir)+'BERTintrasentsim_samplesize'+str(opt.intrasentsim_samplesize)+'.pkl'
         pickle.dump(tensor_intrasentsim.numpy(), open(intrasimfname, 'bw'))
 
         wordsfname=str(opt.outdir)+'sampledwords4selfsim_samplesize'+str(opt.selfsim_samplesize)+'.pkl'
         pickle.dump(wsample,open(wordsfname,'wb'))
+
+        mevfname=str(opt.outdir)+'BERTmev_samplesize'+str(opt.selfsim_samplesize)+'.pkl'
+        pickle.dump(mev_to_pickle,open(mevfname,'wb'))
+        
+        b1fname=str(opt.outdir)+'BERTbaseline1_samplesize'+str(opt.selfsim_samplesize)+'.pkl'
+        pickle.dump(baselines_metric1,open(b1fname,'wb'))
     else:
         logger('   use --save_results options to save results')
 
     return self_similarities, intrasentsim, mev
  
+
+
 def huggingface_compute_metrics(w2s,ssample,opt,hf_model):
     model = Loader.huggingfaceModel(hf_model, opt.cuda)
 

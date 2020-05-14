@@ -35,11 +35,10 @@ pip install -r requirements.txt
 ### Usage
 
 To replicate our experiments, you will first need to clone [moses decoder](https://github.com/moses-smt/mosesdecoder.git)
-```
-git clone https://github.com/moses-smt/mosesdecoder.git
-```
 and to download the STS datasets - can do by running our adapted script from [SentEval](https://github.com/facebookresearch/SentEval):
 ```
+git clone https://github.com/moses-smt/mosesdecoder.git
+
 source getSTSdb.sh /path/to/where/you/cloned/mosesdecoder
 ```
 
@@ -47,7 +46,8 @@ source getSTSdb.sh /path/to/where/you/cloned/mosesdecoder
 You can replicate our experiments by running: 
 ```
 source env/bin/activate
-python code/compare_context_embeddings.py
+cd code
+python compare_context_embeddings.py --save_results
 ```
 
 You can also override the default options using the command line flags. 

@@ -228,7 +228,8 @@ def self_similarity(word,embs_type):
             for j in range(i+1,n):
                 current_selfsim[key] += torch.cosine_similarity(embs[i],embs[j],dim=0)
                 #print(word, i,j,current_selfsim)
-    coeff = 1/(n**2 - n)
+    #coeff = 1/(n**2 - n)
+    coeff = 2 / (n**2 - n)
     current_selfsim['normalized']   *= coeff
     current_selfsim['unnormalized'] *= coeff
     return current_selfsim

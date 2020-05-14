@@ -160,7 +160,7 @@ def extract_embeddings(w2s, all_mt_embedds):
 
 ##### KAWIN-METRICS #####
 
-def self_similarity(encodings):
+def calculate_similarity(encodings):
     n = len(encodings)
 
     current_selfsim = 0
@@ -168,7 +168,7 @@ def self_similarity(encodings):
         for j in range(i+1,n):
             current_selfsim += torch.cosine_similarity(encodings[i],encodings[j],dim=0)
 
-    coeff = 1/(n**2 - n)
+    coeff = 2/(n**2 - n)
     current_selfsim *= coeff
 
     return current_selfsim
@@ -192,17 +192,23 @@ def max_expl_var():
 ##### MAIN #####
 
 if __name__ == '__main__':
-    #parser = argparse.ArgumentParser()
-    #parser.add_argument("--cuda", action='store_true',
-    #                    help="Whether to use a cuda device.") 
-    #opt = parser.parse_args() 
-    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--cuda", action='store_true',
+                        help="Whether to use a cuda device.") 
+    parser.add_argument('--case', type=str, default='uncased')
+    parser.add_argument('--n_words', type=int, default=1000)
+    opt = parser.parse_args() 
+     
    
     # Load pre-trained model tokenizer (vocabulary)
-    bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+    if opt.case == 'uncased':
+        lower = True
+    else:
+        lower = False
+    bert_tokenizer = BertTokenizer.from_pretrained('bert-base-' + opt.case, do_lower_case=lower)
 
     # Load pre-trained model (weights)
-    bert_model = BertModel.from_pretrained('bert-base-uncased')
+    bert_model = BertModel.from_pretrained('bert-base-' + opt.case)
     bert_model.eval()
     bert_model.to('cuda')
 
@@ -227,7 +233,7 @@ if __name__ == '__main__':
     ssample = [sents[idx] for idx in ssample_idx] 
 
 
-    w2s, new_sentences_idx = index_w2s(sents,wsample[0:1000])
+    w2s, new_sentences_idx = index_w2s(sents,wsample[0:opt.n_words])
     new_sentences = [sents[idx] for idx in new_sentences_idx]
     for key, val in w2s.items(): 
         for i, tpl in enumerate(val): 
@@ -241,10 +247,27 @@ if __name__ == '__main__':
     bert_encodings = correct_bert_tokenization(bert_encodings, bert_tokenization)
 
     #mt_embedds = extract_embeddings(w2s,all_mt_embedds)
+   
     
-    #print(w2s)
-    #sys.exit(1)
+    # AVERAGE-SIMILARITY OF EVERY LAYER
+    avg_similarities = {0:0, 1:0, 2:0, 3:0, 4:0, 5:0}
+    to_pickle = numpy.zeros((12, 1))
+    for layer in range(N_BERT_LAYERS):
+        encodings = []
+        for word in w2s.keys():
+            for occurrence in w2s[word]:
+                sentence_id = occurrence[0]
+                word_id = occurrence[1]
+                encodings.append(bert_encodings[sentence_id][layer][0,word_id,:])
+
+        avg_similarities[layer] = calculate_similarity(encodings).item()
+        to_pickle[layer,0] = avg_similarities[layer]
+        print('Avg similarity layer ', layer+1, avg_similarities[layer])
     
+    pickle.dump(to_pickle, open('../results/avg_similarities_of_layers_' + str(opt.n_words) + '_' + opt.case + '.pkl', 'bw'))
+
+    sys.exit(1)
+
     # SELF-SIMILARITY OF WORDS
     self_similarities = {}
     to_pickle = numpy.zeros((12,2500))
@@ -259,13 +282,13 @@ if __name__ == '__main__':
                     encodings.append(bert_encodings[sentence_id][layer][0,word_id,:])
 
                 self_similarities.setdefault(word,{}).setdefault(layer,{})
-                self_similarities[word][layer] = self_similarity(encodings).item()
+                self_similarities[word][layer] = calculate_similarity(encodings).item()
                 to_pickle[layer,wid] = self_similarities[word][layer]
                 print(word, layer, self_similarities[word][layer])
             wid += 1
 
     to_pickle = to_pickle[:, 0:wid]
-    pickle.dump(to_pickle, open('../results/self_similarities_1000.pkl', 'bw'))
+    pickle.dump(to_pickle, open('../results/self_similarities_1000_cased.pkl', 'bw'))
         
 
     '''

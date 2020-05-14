@@ -30,6 +30,9 @@ class w2s:
         self.idx2newsents = set(new_sentences)
     
     def update_indexes(self,sents):
+        '''
+        override old indexes to match the new subset of sentences
+        '''
         self.new_sents = [sents[idx] for idx in self.idx2newsents]
         for key, val in self.w2sdict.items():
             for i, tpl in enumerate(val):

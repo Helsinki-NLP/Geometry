@@ -6,9 +6,13 @@ from pytorch_pretrained_bert import BertTokenizer, BertModel, BertForMaskedLM
 from copy import deepcopy
 from tqdm import tqdm
 from datetime import datetime 
+from typing import List
+import transformers 
 
-import transformers
 import torch
+
+def logger(string):
+    print(' | ',datetime.now().replace(microsecond=0), '|   '+string)
 
 class bertModel():
 
@@ -27,7 +31,7 @@ class bertModel():
     def tokenize(self, sentences):
         '''OPTIONAL: if you want to have more information on what's happening, activate the logger as follows
                     # logging.basicConfig(level=logging.INFO) '''
-        print(' | ',datetime.now().replace(microsecond=0), '|      tokenizing...')
+        logger('   tokenizing...')
         tokenized_sentences = []
         tokens_tensors = []
         for i in tqdm(range(len(sentences))):
@@ -45,9 +49,9 @@ class bertModel():
 
 
     def encode(self, tokens_tensors):
-        print(' | ',datetime.now().replace(microsecond=0), '|      encoding...')
+        logger('   encoding...')
         if self.device =='cpu':
-            print(' | ',datetime.now().replace(microsecond=0), '|      WARNING: using CPU... this might take a while.')
+            logger('   WARNING: using CPU... this might take a while.')
             print('                                        If you have a GPU capable device, use --cuda option.')
         encoded_sentences = []
 
@@ -64,7 +68,7 @@ class bertModel():
 
     def correct_bert_tokenization(self, bert_encodings, bert_sentences):
         
-        print(' | ',datetime.now().replace(microsecond=0), '|      correcting for BERT subword tokenization...')
+        logger('   correcting for BERT subword tokenization...')
         corrected_sentences = []
         for bert_encoding, bert_sentence in tqdm(zip(bert_encodings, bert_sentences)):
             #print(bert_sentence)
@@ -105,6 +109,43 @@ class bertModel():
 def load_onmt_model():
     pass
 
-def load_huggingFace():
-    import transformers 
+class huggingfaceModel():
+    def __init__(self, modelname='bert-base-uncased', cuda=False):
+        self.N_BERT_LAYERS = 12
+        self.ENC_DIM = 768
+        
+        config_overrider={'output_attentions':True, 'output_hidden_states'=True}
+        logger('   getting tokenizer')
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(modelname)    
+        logger('    getting model')
+        self.model = transformers.AutoModelWithLMHead.from_pretrained(modelname, **config_overrider)
+        
+        device='cuda' if cuda else 'cpu'
+        self.device = device      
+        self.model.eval()
+        self.model.to(device)
+        coc = error
     
+    def tokenize(self, sentences):
+        logger('   tokenizing...')
+        batch = self.tokenizer.prepare_translation_batch(src_texts=['is this for real?', 'sometimes it is']) 
+        
+        coso1, coso2 = self.model.forward(batch['input_ids']) 
+        gen = model.generate(**batch) 
+        
+        tokenized_sentences = []
+        tokens_tensors = []
+        for i in tqdm(range(len(sentences))):
+            # add BERT tags
+            sentences[i] = ' '.join(['[CLS]'] + sentences[i] + ['[SEP]'])
+            tokenized_sentences.append(self.tokenizer.tokenize(sentences[i]))
+            
+            # Convert token to vocabulary indices
+            indexed_tokens = self.tokenizer.convert_tokens_to_ids(tokenized_sentences[i])
+            # Convert inputs to PyTorch tensors
+            tokens_tensor = torch.tensor([indexed_tokens])
+            tokens_tensors.append(tokens_tensor)
+
+        return tokens_tensors, tokenized_sentences
+
+        return tokens_tensors, tokenized_sentences

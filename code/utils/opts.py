@@ -25,7 +25,10 @@ def get_parser():
 
     parser.add_argument("--debug_mode", action='store_true',
                         help="Launch ipdb debugger if script crashes.")
-   
+    
+    parser.add_argument("--dev_params", action='store_true',
+                        help="set params and options small enough to develop faster.")
+
     parser.add_argument("--intrasentsim_samplesize", "-intra_ss", required=False, type=int, default=500,
                         help='size of the sentence sample to be extracted for computing the intra-sentence similarity')
 
@@ -39,10 +42,10 @@ def get_parser():
     parser.add_argument("--outdir", type=str, required=False, default='../results/',
                         help='path to dir where outputs will be saved')
 
-    parser.add_argument("--huggingface_model", '-hfmodel', type=str, required=False,
-                        help="name of the huggingface model to use")
+    parser.add_argument("--huggingface_models", '-hfmodels', type=str, required=False, nargs='+', default='Helsinki-NLP/opus-mt-en-de',
+                        help="name of the huggingface model(s) to use. If more than one, separate with a space")
 
-    parser.add_argument("--bert_model",  "-bert", type=str, required=False, default="bert-base-uncased",
+    parser.add_argument("--bert_model",  "-bert", type=str, required=False, default="Helsinki-NLP/opus-mt-en-de",
                         help="Which BERT to use for contextualized embeddings [bert_base_uncased | bert_cased].")
 
     parser.add_argument("--selfsim_samplesize", "-self_ss",required=False, type=int, default=2500,

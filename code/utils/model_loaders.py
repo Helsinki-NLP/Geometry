@@ -110,7 +110,7 @@ class huggingfaceModel():
         self.N_BERT_LAYERS = 12
         self.ENC_DIM = 768
         
-        config_overrider={'output_attentions':True, 'output_hidden_states'=True}
+        config_overrider={'output_attentions':True, 'output_hidden_states':True}
         logger('   getting tokenizer')
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(modelname)    
         logger('    getting model')

@@ -45,7 +45,7 @@ def get_parser():
     parser.add_argument("--huggingface_models", '-hfmodels', type=str, required=False, nargs='+', default='Helsinki-NLP/opus-mt-en-de',
                         help="name of the huggingface model(s) to use. If more than one, separate with a space")
 
-    parser.add_argument("--bert_model",  "-bert", type=str, required=False, default="Helsinki-NLP/opus-mt-en-de",
+    parser.add_argument("--bert_model",  "-bert", type=str, required=False, default="bert-base-uncased",
                         help="Which BERT to use for contextualized embeddings [bert_base_uncased | bert_cased].")
 
     parser.add_argument("--selfsim_samplesize", "-self_ss",required=False, type=int, default=2500,

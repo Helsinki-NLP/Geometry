@@ -58,10 +58,10 @@ def max_expl_var(word_embs):
     pca = PCA(n_components=1)
     pca.fit(word_embs)
 
-    pca_svd = TruncatedSVD(n_components=100)
-    pca_svd.fit(word_embs)
-
+    #pca_svd = TruncatedSVD(n_components=100)
+    #pca_svd.fit(word_embs)
+    
     variance_explained = min(1.0, round(pca.explained_variance_ratio_[0], 4))
-
+ 
     return variance_explained
 

@@ -5,14 +5,13 @@ Utilities for loading models - needed for embedding extraction
 from pytorch_pretrained_bert import BertTokenizer, BertModel, BertForMaskedLM
 from copy import deepcopy
 from tqdm import tqdm
-from datetime import datetime 
 from typing import List
+
 import transformers 
 
 import torch
+from utils.logger import logger
 
-def logger(string):
-    print(' | ',datetime.now().replace(microsecond=0), '|   '+string)
 
 class bertModel():
 
@@ -31,7 +30,7 @@ class bertModel():
     def tokenize(self, sentences):
         '''OPTIONAL: if you want to have more information on what's happening, activate the logger as follows
                     # logging.basicConfig(level=logging.INFO) '''
-        logger('   tokenizing...')
+        logger.info('   tokenizing...')
         tokenized_sentences = []
         tokens_tensors = []
         for i in tqdm(range(len(sentences))):
@@ -49,9 +48,9 @@ class bertModel():
 
 
     def encode(self, tokens_tensors):
-        logger('   encoding...')
+        logger.info('   encoding...')
         if self.device =='cpu':
-            logger('   WARNING: using CPU... this might take a while.')
+            logger.info('   WARNING: using CPU... this might take a while.')
             print('                                        If you have a GPU capable device, use --cuda option.')
         encoded_sentences = []
 
@@ -68,7 +67,7 @@ class bertModel():
 
     def correct_bert_tokenization(self, bert_encodings, bert_sentences):
         
-        logger('   correcting for BERT subword tokenization...')
+        logger.info('   correcting for BERT subword tokenization...')
         corrected_sentences = []
         for bert_encoding, bert_sentence in tqdm(zip(bert_encodings, bert_sentences)):
 
@@ -95,9 +94,9 @@ class bertModel():
                 # Get rid of the [CLS] and [SEP]
                 current_layer_tensor = current_layer_tensor[:,1:-1,:]
 
-                all_layers.append(current_layer_tensor)
-
-            corrected_sentences.append(all_layers)
+                all_layers.append(current_layer_tensor.squeeze())
+ 
+            corrected_sentences.append(torch.stack(all_layers)) # [n_sents, N_BERT_LAYERS, sent_length, h_hidden]
            
         return corrected_sentences
 
@@ -111,9 +110,9 @@ class huggingfaceModel():
         self.ENC_DIM = 768
         
         config_overrider={'output_attentions':True, 'output_hidden_states':True}
-        logger('   getting tokenizer')
+        logger.info('   getting tokenizer')
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(modelname)    
-        logger('    getting model')
+        logger.info('    getting model')
         self.model = transformers.AutoModelWithLMHead.from_pretrained(modelname, **config_overrider)
         
         device='cuda' if cuda else 'cpu'
@@ -123,7 +122,7 @@ class huggingfaceModel():
         coc = error
     
     def tokenize(self, sentences):
-        logger('   tokenizing...')
+        logger.info('   tokenizing...')
         batch = self.tokenizer.prepare_translation_batch(src_texts=['is this for real?', 'sometimes it is']) 
         
         coso1, coso2 = self.model.forward(batch['input_ids']) 

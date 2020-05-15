@@ -22,6 +22,8 @@ from utils import embeddings_manager as Emb
 from utils import model_loaders as Loader
 from utils import similarity_measures as Sim
 
+N_BERT_LAYERS = 12
+
 def  main(opts):
     if opt.dev_params:
         update_opts_to_devmode(opts)
@@ -40,6 +42,7 @@ def  main(opts):
     
     w2s, ssample = create_samples(opt,sents)
 
+    '''
     #load & compute embeddings using huggingface 
     logger('HUGGINGFACE models.')
     if isinstance(opt.huggingface_models,list):
@@ -49,6 +52,7 @@ def  main(opts):
     else:
         logger('   {0} embeddings: computing similarity metrics'.format(opt.huggingface_models))
         hf_selfsim, hf_instrasentsim, hf_mev = huggingface_compute_metrics(w2s,ssample,opt, opt.huggingface_models)
+    '''
 
     #load & compute embeddings using BERT
     logger('BERT embeddings: computing similarity metrics')
@@ -152,14 +156,14 @@ def BERT_compute_metrics(w2s,ssample,opt):
     baselines_metric1 = np.zeros((1, model.N_BERT_LAYERS))
     for layer in range(N_BERT_LAYERS):
         all_embs_list = []
-        for word in w2s.keys():
-            for occurrence in w2s[word]:
+        for word,occurrences in w2s.w2sdict.items():
+            for occurrence in occurrences:
                 sentence_id = occurrence[0]
                 word_id = occurrence[1]
                 all_embs_list.append(bert_encodings[sentence_id][layer][0,word_id,:])
         
         all_embs = torch.stack(all_embs_list, dim=0)
-        baselines_metric1[0,layer] = calculate_similarity(all_embs).item()
+        baselines_metric1[0,layer] = Sim.self_similarity(all_embs).item()
 
 
     # SELF SIMILARITIES OF WORDS [METRIC 1] + MAXIMUM EXPLAINABLE VARIANCES [METRIC 3]

@@ -59,3 +59,8 @@ cat data/STS/STS1*/*.input.*txt | cut -f1 | $LOWER > tmp1
 cat data/STS/STS1*/*.input.*txt | cut -f2 | $LOWER > tmp2
 cat tmp1 tmp2 > data/STS/allSTS.lowercase.txt
 rm tmp1 tmp2
+
+cd data/STS
+ln -s allSTS.txt allSTS_dev.txt
+ln -s allSTS.lowercase.txt allSTS.lowercase_dev.txt
+cd ../..

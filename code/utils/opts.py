@@ -20,7 +20,7 @@ def get_parser():
     parser.add_argument("--cuda", action='store_true',
                         help="Whether to use a cuda device.")
     
-    parser.add_argument("--data_path", required=False, type=str, default="../data/allSTS.txt",
+    parser.add_argument("--data_path", required=False, type=str, default="../data/STS/allSTS.txt",
                         help="Dataset used to sample from. Defaults to STS datasets.")
 
     parser.add_argument("--debug_mode", action='store_true',
@@ -35,9 +35,16 @@ def get_parser():
     parser.add_argument("--isotropycorrection_samplesize", required=False, type=int, default=1000,
                         help='size of the words sample to be extracted for computing the isotropy correction factor')
 
+    parser.add_argument("--load_embeddings_path", type=str, required=False, nargs='+', 
+                        help="name of the huggingface embeddings(s) to use. If more than one, separate with a space"\
+                              "if not specified, will compute embeddings for all specified models in bert, huggingface & onmt"\
+                              "and save them into ../embeddings/[modelname].pkl")
+
+    parser.add_argument("--load_w2s_path", type=str, required=False, 
+                        help="path to the word to sentence indexer. Saved as default in ../embeddings/w2s.pkl")
+
     parser.add_argument("--onmt_model", type=str, required=False,
                         help='path to read onmt_model')
-  
 
     parser.add_argument("--outdir", type=str, required=False, default='../results/',
                         help='path to dir where outputs will be saved')
@@ -45,7 +52,7 @@ def get_parser():
     parser.add_argument("--huggingface_models", '-hfmodels', type=str, required=False, nargs='+', default='Helsinki-NLP/opus-mt-en-de',
                         help="name of the huggingface model(s) to use. If more than one, separate with a space")
 
-    parser.add_argument("--bert_model",  "-bert", type=str, required=False, default="Helsinki-NLP/opus-mt-en-de",
+    parser.add_argument("--bert_model",  "-bert", type=str, required=False, default="bert-base-uncased",
                         help="Which BERT to use for contextualized embeddings [bert_base_uncased | bert_cased].")
 
     parser.add_argument("--selfsim_samplesize", "-self_ss",required=False, type=int, default=2500,

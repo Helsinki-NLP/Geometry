@@ -1,6 +1,14 @@
 '''
 Contains functions to manage embedding representations
 '''
+import h5py
+import pickle
+import os
+from tqdm import tqdm
+
+
+from utils.logger import logger
+from utils import model_loaders as Loader
 
 class w2s:
     '''
@@ -38,6 +46,13 @@ class w2s:
             for i, tpl in enumerate(val):
                 new_idx = list(self.idx2newsents).index(tpl[0])
                 self.w2sdict[key][i] = (new_idx, tpl[1])
+
+    def save_w2s(self,fname):
+        outfile=f'../embeddings/{fname}.plk'
+        print(coso)
+        with open(outfile, 'w') as fout:
+            for idx,embs in tqdm(enumerate(embeddings)):
+                fout.create_dataset(str(idx), embs.shape, dtype='float32', data=embs)
         
 
 
@@ -79,3 +94,111 @@ def extract_embeddings(w2s, all_mt_embedds):
 
     return embedds
 
+def average_selfsim_per_layer(w2s,embeddings):
+    avg_similarities = {}
+    to_pickle = numpy.zeros((12, 1))
+    for layer in range(N_BERT_LAYERS):
+        encodings = []
+        for word in w2s.keys():
+            for occurrence in w2s[word]:
+                sentence_id = occurrence[0]
+                word_id = occurrence[1]
+                encodings.append(bert_encodings[sentence_id][layer][0,word_id,:])
+
+        avg_similarities[layer] = calculate_similarity(encodings).item()
+        to_pickle[layer,0] = avg_similarities[layer]
+        print('Avg similarity layer ', layer+1, avg_similarities[layer])
+    
+    pickle.dump(to_pickle, open('../results/avg_similarities_of_layers_' + str(opt.n_words) + '_' + opt.case + '.pkl', 'bw'))
+
+
+    return avg_similarities
+
+
+def saveh5file(fname,embeddings):
+    outfile=f'../embeddings/{fname}.h5'
+    with h5py.File(outfile, 'w') as fout:
+        for idx,embs in tqdm(enumerate(embeddings)):
+            fout.create_dataset(str(idx), embs.shape, dtype='float32', data=embs)
+            
+
+
+def BERT_compute_embeddings(w2s,opt):
+
+    # load model + tokenizer
+    model = Loader.bertModel(opt.bert_model, opt.cuda)
+
+    # SELF-SIMILARITY OF WORDS
+    logger.info('   self-similarity and max explainable variance ')
+    #compute BERT embeddings
+    bert_tokens, bert_tokenization =  model.tokenize(w2s.new_sents)
+    bert_encodings = model.encode(bert_tokens)
+    bert_encodings = model.correct_bert_tokenization(bert_encodings, bert_tokenization)
+    
+    outfile=f'{opt.bert_model}' if not opt.dev_params else f'{opt.bert_model}_dev'
+    saveh5file(outfile,bert_encodings)
+    return bert_encodings
+
+
+def huggingface_compute_embeddings(w2s,opt,hfmodel):
+    # load model + tokenizer
+    model = Loader.huggingfaceModel(hfmodel, opt.cuda)
+
+
+    #compute embeddings
+    hf_tokens, hf_tokenization =  model.tokenize(w2s.new_sents)
+    hf_encodings = model.encode(hf_tokens)
+    hf_encodings = model.correct_bert_tokenization(hf_encodings, hf_tokenization)
+
+    outfile=f'{opt.hfmodel}' if not opt.dev_params else f'{opt.bert_model}_dev'
+    saveh5file(outfile,hf_encodings)
+    return bert_encodings
+
+
+
+
+
+
+def compute_or_load_embeddings(opt,w2s):
+    '''
+    loads embeddings if --load_embeddings_path is given
+    otherwise computes and saves embeddings given by --bert_model and --huggingface_models
+
+    INPUT:
+        - opt
+        - w2s[class]: see above
+    OUTPUT:
+        - all_embeddings[dict[modelname:embeddings]]: dictionary with all embeddings.
+                                                      either loads them with --load_embeddings_path
+
+    '''
+    all_embeddings={}
+    if not opt.load_embeddings_path:
+        # compute embeddings using BERT
+        logger.info('BERT embeddings: computing & saving embeddings')
+        all_embeddings[opt.bert_model] = BERT_compute_embeddings(w2s,opt)
+    
+        # compute embeddings using huggingface 
+        logger.info('HUGGINGFACE models:')
+        if isinstance(opt.huggingface_models,list):
+            for hfmodel in opt.huggingface_models:
+                logger.info('   {0} embeddings: computing & saving embeddings'.format(hfmodel))
+                all_embeddings[hfmodel] = huggingface_compute_embeddings(w2s,opt,hfmodel)
+        else:
+            hfmodel=opt.huggingface_models
+            logger.info('   {0} embeddings: computing & saving embeddings'.format(hfmodel))
+            all_embeddings[hfmodel] = huggingface_compute_embeddings(w2s,opt,hfmodel)
+
+
+    else:
+        # load embeddings
+        logger.info('Loading embeddings...')
+        if isinstance(opt.load_embeddings_path,list):
+            for file in opt.load_embeddings_path:
+                fname=os.path.basename(file)
+                all_embeddings[fname] = 'prueba'   
+        else:
+            fname=os.load.basename(opt.load_embeddings_path)
+            all_embeddings[fname]= h5py.File(opt.load_embeddings_path, 'r')
+    
+    return all_embeddings

@@ -24,8 +24,6 @@ from utils import embeddings_manager as Emb
 from utils import similarity_measures as Sim
 
 def  main(opts):
-    if opt.dev_params:
-        update_opts_to_devmode(opts)
     
     logger.info('Loading data samples from '+str(opt.data_path))
     STS_path = opt.data_path
@@ -85,21 +83,6 @@ def  main(opts):
 
 
 
-def update_opts_to_devmode(opts):
-    logger.info('dev mode activated... overriding parameters:')
-    print('                          --use_samples = True,')
-    print(f'                         --opt.data_path = {opt.data_path}_dev,')
-    print('                          --intrasentsim_samplesize = 10,')
-    print('                          --isotropycorrection_samplesize = 25')
-    print('                          --selfsim_samplesize = 1')
-    #print('                          huggingface_models = bert-base-uncased')
-    #opts.debug_mode = True
-    opts.use_samples=True
-    opt.data_path=f'..{opt.data_path.strip(".txt")}_dev.txt'
-    opts.intrasentsim_samplesize = 10
-    opts.isotropycorrection_samplesize = 25
-    opts.selfsim_samplesize = 1
-    #opts.huggingface_models = 'bert-base-uncased'
 
 def make_or_load_w2s(opt, sents):
     ''' 
@@ -153,8 +136,8 @@ def make_indexer(opt,sents):
         w2s = Emb.w2s(sents,bow5x)
     
     fbasename=os.path.basename(opt.data_path).strip('.txt')
-    fname=f'{fbasename}_w2s' if not opt.dev_params else f'{fbasename}_w2s_dev'
-    logger.info(f'Dumping word2sentence indexer at location: ../embeddings/{fname}.plk')
+    fname=f'{fbasename}_w2s' 
+    logger.info(f'Dumping word2sentence indexer at location: ../embeddings/{fname}.pkl')
     pickle.dump(w2s,open(f'../embeddings/{fname}.plk','wb'))
 
     return w2s
@@ -235,10 +218,30 @@ def compute_similarity_metrics():
     return self_similarities, intrasentsim, mev
  
 
+def update_opts_to_devmode(opts):
+    logger.info('dev mode activated... overriding parameters:')
+    print('                                --debug_mode = True,')
+    print('                                --use_samples = True,')
+    print(f'                                --data_path = {opt.data_path.strip(".txt")}_dev.txt,')
+    print('                                --intrasentsim_samplesize = 10,')
+    print('                                --isotropycorrection_samplesize = 25')
+    print('                                --selfsim_samplesize = 1')
+    #print('                          huggingface_models = bert-base-uncased')
+    opts.debug_mode = True
+    opts.use_samples=True
+    opt.data_path=f'..{opt.data_path.strip(".txt")}_dev.txt'
+    opts.intrasentsim_samplesize = 10
+    opts.isotropycorrection_samplesize = 25
+    opts.selfsim_samplesize = 3
+    #opts.huggingface_models = 'bert-base-uncased'
+
+
 
 if __name__ == '__main__':
     parser = opts.get_parser()
     opt = parser.parse_args()
+    if opt.dev_params:
+        update_opts_to_devmode(opt)
     if opt.debug_mode:
         with ipdb.launch_ipdb_on_exception():
             main(opt)

@@ -49,7 +49,7 @@ def get_parser():
     parser.add_argument("--outdir", type=str, required=False, default='../results/',
                         help='path to dir where outputs will be saved')
 
-    parser.add_argument("--huggingface_models", '-hfmodels', type=str, required=False, nargs='+', default='Helsinki-NLP/opus-mt-en-de',
+    parser.add_argument("--huggingface_models", '-hfmodels', type=str, required=False, nargs='+', default=['Helsinki-NLP/opus-mt-en-de','Helsinki-NLP/opus-mt-en-fr','Helsinki-NLP/opus-mt-en-ee','Helsinki-NLP/opus-mt-en-fi','Helsinki-NLP/opus-mt-en-el','Helsinki-NLP/opus-mt-en-cs','Helsinki-NLP/opus-mt-en-it','Helsinki-NLP/opus-mt-en-ru','Helsinki-NLP/opus-mt-en-sv'],
                         help="name of the huggingface model(s) to use. If more than one, separate with a space")
 
     parser.add_argument("--bert_model",  "-bert", type=str, required=False, default="bert-base-uncased",
@@ -60,5 +60,8 @@ def get_parser():
 
     parser.add_argument("--save_results", action='store_true',
                         help="if active, will save results into --outdir.")
+
+    parser.add_argument("--use_samples", action='store_true',
+                        help="use samples instead of the whole dataset.")
 
     return parser

@@ -51,7 +51,7 @@ class bertModel():
         logger.info('   encoding...')
         if self.device =='cpu':
             logger.info('   WARNING: using CPU... this might take a while.')
-            print('                                        If you have a GPU capable device, use --cuda option.')
+            print('                                If you have a GPU capable device, use --cuda option.')
         encoded_sentences = []
 
         for i in tqdm(range(len(tokens_tensors))):
@@ -66,7 +66,6 @@ class bertModel():
         return encoded_sentences
 
     def correct_bert_tokenization(self, bert_encodings, bert_sentences):
-        
         logger.info('   correcting for BERT subword tokenization...')
         corrected_sentences = []
         for bert_encoding, bert_sentence in tqdm(zip(bert_encodings, bert_sentences)):
@@ -101,7 +100,6 @@ class bertModel():
            
         #print('cbt: ', bert_sentences[0])
         #print('cbt: ', corrected_sentences[0][0].shape)
-
         return corrected_sentences
 
 
@@ -110,41 +108,130 @@ def load_onmt_model():
 
 class huggingfaceModel():
     def __init__(self, modelname='bert-base-uncased', cuda=False):
-        self.N_BERT_LAYERS = 12
-        self.ENC_DIM = 768
+
         
+        
+        #configfile=transformers.AutoConfig.from_pretrained(modelname)
+        #configfile=transformers.PretrainedConfig.get_config_dict(modelname)[0]
+        #for key,val in config_overrider.items(): configfile[key]=val 
+
+        logger.info('     loading model')
+        
+        #self.model = transformers.AutoModelWithLMHead.from_pretrained(modelname, **config_overrider)
         config_overrider={'output_attentions':True, 'output_hidden_states':True}
-        logger.info('   getting tokenizer')
-        self.tokenizer = transformers.AutoTokenizer.from_pretrained(modelname)    
-        logger.info('    getting model')
-        self.model = transformers.AutoModelWithLMHead.from_pretrained(modelname, **config_overrider)
+        self.model = transformers.MarianMTModel.from_pretrained(modelname, **config_overrider)
         
+        logger.info('     loading tokenizer')
+        self.tokenizer = transformers.MarianTokenizer.from_pretrained(modelname)    
+
         device='cuda' if cuda else 'cpu'
         self.device = device      
         self.model.eval()
         self.model.to(device)
-        coc = error
+        
+        self.N_ENC_LAYERS = self.model.config.encoder_layers
+        self.N_DEC_LAYERS = self.model.config.decoder_layers
+        self.DIM_HIDDEN = self.model.config.d_model # dimendion of the model
+        self.bsz = 256 if cuda else 16
     
-    def tokenize(self, sentences):
-        logger.info('   tokenizing...')
-        batch = self.tokenizer.prepare_translation_batch(src_texts=['is this for real?', 'sometimes it is']) 
-        
-        coso1, coso2 = self.model.forward(batch['input_ids']) 
-        gen = model.generate(**batch) 
-        
-        tokenized_sentences = []
-        tokens_tensors = []
-        for i in tqdm(range(len(sentences))):
-            # add BERT tags
-            sentences[i] = ' '.join(['[CLS]'] + sentences[i] + ['[SEP]'])
-            tokenized_sentences.append(self.tokenizer.tokenize(sentences[i]))
-            
-            # Convert token to vocabulary indices
-            indexed_tokens = self.tokenizer.convert_tokens_to_ids(tokenized_sentences[i])
-            # Convert inputs to PyTorch tensors
-            tokens_tensor = torch.tensor([indexed_tokens])
-            tokens_tensors.append(tokens_tensor)
+    def tokenize(self, sentences): 
+        return [self.tokenizer.tokenize(' '.join(sent)) for sent in sentences] 
 
-        return tokens_tensors, tokenized_sentences
 
-        return tokens_tensors, tokenized_sentences
+    def unbatch(self, encoded_sentences_batched, tokd_batches, numsents):
+        '''
+        # correct dimensions from batching
+        OUTPUT
+            - encoded_sentences [list[list[tensor]]]. list of size numsents. 
+                                                      each element is a list of size nlayers(1+N_ENC_LAYERS+N_DEC_LAYERS)
+                                                     each entry a tensor of size [sentlength, self.DIM_HIDDEN]
+        '''
+        nlayers = 1+self.N_ENC_LAYERS +self.N_DEC_LAYERS 
+        encoded_sentences = [[None for i in range(nlayers)] for j in range(numsents)]
+        
+        for i, (batch, encodings) in enumerate(zip(tokd_batches, encoded_sentences_batched)):
+            for nlay, layer_values in enumerate(encodings): 
+                sentlevel = [ encsent[batch['attention_mask'][nsent].bool()] for nsent,encsent in enumerate(layer_values) ]
+                for nsent, encsent in enumerate(sentlevel):
+                    real_nsent = i*self.bsz+nsent
+                    encoded_sentences[real_nsent][nlay] = encsent
+                          
+        return encoded_sentences
+
+    def encode(self, sentences):
+        '''
+        encodes sentences
+        OUTPUT:
+            - encoded_sentences[list]: list of size |batches| . Each element of the list contains a list with the encodings 
+                                       of embeddings layer, encoder_layers, decoder_layers
+        '''
+        logger.info('   tokenizing and computing embeddings ...')
+
+        # compute by batches, because it is faster
+        encoded_sentences = []
+        tokd_batches = []
+        for batch_id in tqdm(range(0,len(sentences),self.bsz)):
+            last_id = min(batch_id+self.bsz, len(sentences)) # the last batch could be smaller than bsz
+            thisbatch = [' '.join(sentences[i]) for i in range(batch_id,last_id)]
+            tokdbatch = self.tokenizer.prepare_translation_batch(src_texts= thisbatch ) 
+            model_outputs = self.model.forward(**tokdbatch) 
+            tokd_batches.append(tokdbatch)
+            encoded_sentences.append( model_outputs[4]+model_outputs[1])
+        
+        tokd_sentences = self.tokenize(sentences)
+        
+
+
+        encoded_sentences = self.unbatch(encoded_sentences, tokd_batches, len(sentences))
+   
+
+        #encoded_sentences = []
+        #for sent in tqdm(sentences):
+        #    tokdsent = self.tokenizer.prepare_translation_batch(src_texts=[' '.join(sent)]) 
+        #    model_outputs = self.model.forward(tokdsent['input_ids']) 
+        #    #dec_out=model_outputs[:3] # x, all_hidden_states(output_hidden_states=True), all_self_attns(output_attentions=True)
+        #    #enc_out=model_outputs[3:] # x, encoder_states(output_hidden_states=True), all_attentions(output_attentions=True)
+        #    tokd_sentences.append(tokdsent) 
+        #    encoded_sentences.append( model_outputs[4]+model_outputs[1])
+        return tokd_sentences, encoded_sentences
+
+
+    
+    def correct_tokenization(self, tokd_sentences, encodings):
+        logger.info('   correcting for tokenization...')
+        nlayers=self.N_ENC_LAYERS + self.N_DEC_LAYERS + 1
+        corrected_sentences = []
+
+        for encoding, sentence in tqdm(zip(encodings, tokd_sentences)):
+            #sentence.append('▁<eos>')
+            all_layers = []
+            for layer in range(nlayers):
+                current_layer = []
+
+                prev_token = encoding[layer][0,:] 
+
+                sequence_len = encoding[layer].shape[0]-1 # sentence does not include <eos>
+                
+                accum = 1
+                for token_id in range(1,sequence_len):
+                    if  sentence[token_id][0] == '▁':
+                        current_layer.append(prev_token / accum) # Average pooling
+                        accum = 1
+                        prev_token = encoding[layer][token_id,:]
+                    else:
+                        prev_token += encoding[layer][token_id,:] # Average pooling
+                        accum += 1
+                
+                # Add the last token too:
+                current_layer.append(prev_token / accum) # Average pooling
+
+                current_layer_tensor = torch.stack(current_layer, dim=0)
+
+                all_layers.append(current_layer_tensor.detach())
+        
+            corrected_sentences.append(torch.stack(all_layers)) # [n_sents, N_BERT_LAYERS, sent_length, h_hidden]
+           
+        return corrected_sentences
+
+
+        

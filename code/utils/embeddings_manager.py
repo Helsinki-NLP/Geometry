@@ -30,7 +30,7 @@ class w2s:
         '''
         self.w2sdict={word:[] for word in wsample} # word:[(sent1,pos1),(sent2,pos2)]
         new_sentences = []
-        for i,sentence in enumerate(sents):
+        for i,sentence in tqdm(enumerate(sents)):
             for j,word in enumerate(sentence):
                 if word in wsample:
                     self.w2sdict[word].append((i,j))
@@ -115,8 +115,9 @@ def average_selfsim_per_layer(w2s,embeddings):
     return avg_similarities
 
 
-def saveh5file(fname,embeddings):
-    outfile=f'../embeddings/{fname}.h5'
+def saveh5file(outdir,fname,embeddings):
+    outfile=f'{outdir}/{fname}.h5'
+    logger.info('   saving to {0}'.format(outfile))
     with h5py.File(outfile, 'w') as fout:
         for idx,embs in tqdm(enumerate(embeddings)):
             fout.create_dataset(str(idx), embs.shape, dtype='float32', data=embs)
@@ -131,12 +132,14 @@ def BERT_compute_embeddings(w2s,opt):
     # SELF-SIMILARITY OF WORDS
     logger.info('   self-similarity and max explainable variance ')
     #compute BERT embeddings
-    bert_tokens, bert_tokenization =  model.tokenize(w2s.new_sents)
+    bert_tokens, bert_tokenization =  model.tokenize(w2s.new_sents.copy())
+    if (opt.dev_params and len(bert_tokens)>17):
+        bert_tokens = bert_tokens[0:17] 
     bert_encodings = model.encode(bert_tokens)
     bert_encodings = model.correct_bert_tokenization(bert_encodings, bert_tokenization)
     
     outfile=f'{opt.bert_model}' if not opt.dev_params else f'{opt.bert_model}_dev'
-    saveh5file(outfile,bert_encodings)
+    saveh5file(opt.outdir,outfile,bert_encodings)
     return bert_encodings
 
 
@@ -146,13 +149,15 @@ def huggingface_compute_embeddings(w2s,opt,hfmodel):
 
 
     #compute embeddings
-    hf_tokens, hf_tokenization =  model.tokenize(w2s.new_sents)
-    hf_encodings = model.encode(hf_tokens)
-    hf_encodings = model.correct_bert_tokenization(hf_encodings, hf_tokenization)
 
-    outfile=f'{opt.hfmodel}' if not opt.dev_params else f'{opt.bert_model}_dev'
-    saveh5file(outfile,hf_encodings)
-    return bert_encodings
+    #tokd_sentences = model.tokenize(w2s.new_sents.copy())
+    sentences= w2s.new_sents.copy()[0:19] if opt.dev_params else w2s.new_sents.copy()
+    hf_tokd, hf_encodings =  model.encode(sentences)
+    hf_encodings = model.correct_tokenization(hf_tokd, hf_encodings)#, hf_tokenization)
+
+    outfile=os.path.basename(hfmodel) if not opt.dev_params else f'{os.path.basename(hfmodel)}_dev'
+    saveh5file(opt.outdir,outfile,hf_encodings)
+    return hf_encodings
 
 
 
@@ -181,12 +186,12 @@ def compute_or_load_embeddings(opt,w2s):
         # compute embeddings using huggingface 
         logger.info('HUGGINGFACE models:')
         if isinstance(opt.huggingface_models,list):
-            for hfmodel in opt.huggingface_models:
-                logger.info('   {0} embeddings: computing & saving embeddings'.format(hfmodel))
+            for i,hfmodel in enumerate(opt.huggingface_models):
+                logger.info('   [{0}] {1} embeddings: computing & saving embeddings'.format(i,hfmodel))
                 all_embeddings[hfmodel] = huggingface_compute_embeddings(w2s,opt,hfmodel)
         else:
             hfmodel=opt.huggingface_models
-            logger.info('   {0} embeddings: computing & saving embeddings'.format(hfmodel))
+            logger.info('   [0] {0} embeddings: computing & saving embeddings'.format(hfmodel))
             all_embeddings[hfmodel] = huggingface_compute_embeddings(w2s,opt,hfmodel)
 
 

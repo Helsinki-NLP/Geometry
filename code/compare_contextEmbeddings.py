@@ -134,7 +134,7 @@ def make_indexer(opt,sents):
         w2s.update_indexes(sents)
     else:
         w2s = Emb.w2s(sents,bow5x)
-    
+        w2s.update(sents)
     fbasename=os.path.basename(opt.data_path).strip('.txt')
     fname=f'{fbasename}_w2s' 
     logger.info(f'Dumping word2sentence indexer at location: ../embeddings/{fname}.pkl')

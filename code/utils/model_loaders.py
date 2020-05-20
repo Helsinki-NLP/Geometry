@@ -61,6 +61,7 @@ class bertModel():
             with torch.no_grad():
                 encoded_layers, _ = self.model(tokens_tensors[i])
             
+            import ipdb; ipdb.set_trace()
             encoded_sentences.append(encoded_layers)
             
         return encoded_sentences

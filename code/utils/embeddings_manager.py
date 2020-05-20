@@ -47,6 +47,9 @@ class w2s:
                 new_idx = list(self.idx2newsents).index(tpl[0])
                 self.w2sdict[key][i] = (new_idx, tpl[1])
 
+    def update(self,sents):
+        self.new_sents = [sents[idx] for idx in self.idx2newsents]
+
     def save_w2s(self,fname):
         outfile=f'../embeddings/{fname}.plk'
         print(coso)

@@ -4,7 +4,7 @@
 #SBATCH -t 72:00:00
 #SBATCH --mem=350000
 #SBATCH --mem=350000
-#SBATCH --gres=gpu:v100:1
+#SBATCH --gres=gpou:v100:1,nvme:24
 #SBATCH -J bert
 #SBATCH -o logs/bert.out.%j
 #SBATCH -e logs/bert.err.%j

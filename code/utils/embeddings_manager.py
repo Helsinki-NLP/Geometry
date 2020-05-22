@@ -117,8 +117,17 @@ def average_selfsim_per_layer(w2s,embeddings):
 
     return avg_similarities
 
+def loadh5file(load_path):
+    '''load embeddings and convert to list of tensors'''
+    logger.info('   loading from {0}'.format(load_path))
+    h5f = h5py.File(load_path, 'r')
+    setlen = len(h5f)
+    loaded_embs = [torch.FloatTensor(h5f.get(str(i))[()]) for i in range(setlen)]
+    h5f.close()
+    return loaded_embs
 
 def saveh5file(outdir,fname,embeddings):
+    '''save embeddings in h5 format'''
     outfile=f'{outdir}/{fname}.h5'
     logger.info('   saving to {0}'.format(outfile))
     with h5py.File(outfile, 'w') as fout:
@@ -127,10 +136,10 @@ def saveh5file(outdir,fname,embeddings):
             
 
 
-def BERT_compute_embeddings(w2s,opt):
+def BERT_compute_embeddings(w2s,opt,bmodel):
 
     # load model + tokenizer
-    model = Loader.bertModel(opt.bert_model, opt.cuda)
+    model = Loader.bertModel(bmodel, opt.cuda)
 
     # SELF-SIMILARITY OF WORDS
     logger.info('   self-similarity and max explainable variance ')
@@ -141,7 +150,7 @@ def BERT_compute_embeddings(w2s,opt):
     bert_encodings = model.encode(bert_tokens)
     bert_encodings = model.correct_bert_tokenization(bert_encodings, bert_tokenization)
     
-    outfile=f'{opt.bert_model}' if not opt.dev_params else f'{opt.bert_model}_dev'
+    outfile=f'{bmodel}' if not opt.dev_params else f'{bmodel}_dev'
     saveh5file(opt.outdir,outfile,bert_encodings)
     return bert_encodings
 
@@ -183,13 +192,20 @@ def compute_or_load_embeddings(opt,w2s):
     all_embeddings={}
     if not opt.load_embeddings_path:
         # compute embeddings using BERT
-        logger.info('BERT embeddings: computing & saving embeddings')
-        all_embeddings[opt.bert_model] = BERT_compute_embeddings(w2s,opt)
+        logger.info('BERT models:')
+        if isinstance(opt.bert_models, list):
+            for i, bmodel in enumerate(opt.bert_models):
+                logger.info('   [{0}] {1} embeddings: computing & saving embeddings'.format(i, bmodel))
+                all_embeddings[bmodel] = BERT_compute_embeddings(w2s, opt, bmodel)
+        else:
+            bmodel=opt.bert_models
+            logger.info('   [0] {1} embeddings: computing & saving embeddings'.format(i, bmodel))
+            all_embeddings[bmodel] = BERT_compute_embeddings(w2s, opt, bmodel)
     
-        # compute embeddings using huggingface 
+        # compute embeddings using HUGGINGFACE 
         logger.info('HUGGINGFACE models:')
-        if isinstance(opt.huggingface_models,list):
-            for i,hfmodel in enumerate(opt.huggingface_models):
+        if isinstance(opt.huggingface_models, list):
+            for i, hfmodel in enumerate(opt.huggingface_models):
                 logger.info('   [{0}] {1} embeddings: computing & saving embeddings'.format(i,hfmodel))
                 all_embeddings[hfmodel] = huggingface_compute_embeddings(w2s,opt,hfmodel)
         else:
@@ -197,16 +213,23 @@ def compute_or_load_embeddings(opt,w2s):
             logger.info('   [0] {0} embeddings: computing & saving embeddings'.format(hfmodel))
             all_embeddings[hfmodel] = huggingface_compute_embeddings(w2s,opt,hfmodel)
 
-
     else:
         # load embeddings
-        logger.info('Loading embeddings...')
+        logger.info('Loading embeddings...') 
         if isinstance(opt.load_embeddings_path,list):
             for file in opt.load_embeddings_path:
-                fname=os.path.basename(file)
-                all_embeddings[fname] = 'prueba'   
+                fname=os.path.basename(file).split('.')[0]
+                all_embeddings[fname] = loadh5file(file)
         else:
-            fname=os.load.basename(opt.load_embeddings_path)
-            all_embeddings[fname]= h5py.File(opt.load_embeddings_path, 'r')
+            path = opt.load_embeddings_path
+            if os.path.isdir(path):
+                for file in os.listdir(path):
+                    fname, extension =os.path.basename(file).split('.')
+                    if extension == 'h5':
+                        all_embeddings[fname] = loadh5file(path+file)
+        
+            else:
+                fname = os.path.basename(path).split('.')[0]
+                all_embeddings[fname]= loadh5file(path) 
     
     return all_embeddings

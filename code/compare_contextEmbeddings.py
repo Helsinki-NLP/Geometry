@@ -23,8 +23,6 @@ from utils.logger import logger
 from utils import embeddings_manager as Emb
 from utils import similarity_measures as Sim
 
-N_BERT_LAYERS = 12
-
 def  main(opts):
     
     logger.info('Loading data samples from '+str(opt.data_path))
@@ -44,6 +42,11 @@ def  main(opts):
 
     for modname, embs in all_embeddings.items():
         compute_similarity_metrics()
+
+
+
+
+    '''
 
     #load & compute embeddings from MT model
     logger.info('Running sentences containing sampled words through the mt-encoder')
@@ -79,7 +82,7 @@ def  main(opts):
             tensor_selfsimilarities[wordid,layerid,:] = self_similarity(word, embs_type)
 
 
-
+    '''
 
 def make_or_load_w2s(opt, sents):
     ''' 
@@ -159,126 +162,8 @@ def create_samples(opt,w2s,sents):
     return wsample, ssample
 
 
-<<<<<<< HEAD
-    # load model + tokenizer
-    model = Loader.bertModel(opt.bert_model, opt.cuda)
-
-    # SELF-SIMILARITY OF WORDS
-    logger('   self-similarity and max explainable variance ')
-    #compute BERT embeddings
-    bert_tokens, bert_tokenization =  model.tokenize(w2s.new_sents)
-    bert_encodings = model.encode(bert_tokens)
-    bert_encodings = model.correct_bert_tokenization(bert_encodings, bert_tokenization)
-
-    # BASELINE WORD SIMILARITIES [FOR ANISOTROPY CORRECTION OF METRIC 1]
-    baselines_metric1 = np.zeros((1, model.N_BERT_LAYERS))
-    for layer in range(N_BERT_LAYERS):
-        all_embs_list = []
-        for word,occurrences in w2s.w2sdict.items():
-            for occurrence in occurrences:
-                sentence_id = occurrence[0]
-                word_id = occurrence[1]
-                all_embs_list.append(bert_encodings[sentence_id][layer][0,word_id,:])
-        
-        all_embs = torch.stack(all_embs_list, dim=0)
-        baselines_metric1[0,layer] = Sim.self_similarity(all_embs).item()
-
-
-    # SELF SIMILARITIES OF WORDS [METRIC 1] + MAXIMUM EXPLAINABLE VARIANCES [METRIC 3]
-=======
 def compute_similarity_metrics():
     logger.info('   self-similarity and max explainable variance ')
->>>>>>> 64751148b5852182e8c0309ba1d85fdd6b22d0e0
-    self_similarities = {}
-    mev={}
-    ss_to_pickle = np.zeros((opt.selfsim_samplesize, model.N_BERT_LAYERS))
-    mev_to_pickle = np.zeros((opt.selfsim_samplesize, model.N_BERT_LAYERS))
-    wid = 0
-    for word,occurrences in w2s.w2sdict.items():
-        for layer in range(model.N_BERT_LAYERS):
-            embs4thisword = torch.zeros((len(occurrences), model.ENC_DIM))
-            
-            for i, idx_tuple in enumerate(occurrences):
-                sentence_id = idx_tuple[0]
-                word_id = idx_tuple[1]
-                embs4thisword[i,:] = bert_encodings[sentence_id][layer][0,word_id,:]
-
-            self_similarities.setdefault(word,{}).setdefault(layer,{})
-            #anisotropy-correct here:
-            self_similarities[word][layer] = Sim.self_similarity(embs4thisword).item() - baselines_metric1[0,layer]
-            mev.setdefault(word,{}).setdefault(layer,{})
-            mev[word][layer] = Sim.max_expl_var(embs4thisword)
-
-            ss_to_pickle[wid,layer] = self_similarities[word][layer]
-            mev_to_pickle[wid,layer] = mev[word][layer]
-
-        wid += 1
-
-<<<<<<< HEAD
-    ss_to_pickle = ss_to_pickle[:, 0:wid]
-    mev_to_pickle = mev_to_pickle[:, 0:wid]
-
-
-     
-
-    # INTRA-SENTENCE SIMILARITY [METRIC 2]
-    logger('   intra-sentence similarity ')
-=======
-    # INTRA-SENTENCE SIMILARITY
-    logger.info('   intra-sentence similarity ')
->>>>>>> 64751148b5852182e8c0309ba1d85fdd6b22d0e0
-    #compute BERT embeddings
-    ssample_bert_tokens, ssample_bert_tokenization =  model.tokenize(ssample)
-    ssample_bert_encodings = model.encode(ssample_bert_tokens)
-    ssample_bert_encodings = model.correct_bert_tokenization(ssample_bert_encodings, ssample_bert_tokenization)
-    
-    # get intrasentsim
-    intrasentsim = torch.zeros((opt.intrasentsim_samplesize, model.N_BERT_LAYERS))
-    for lid, layer in enumerate(range(model.N_BERT_LAYERS)):
-        for sid, sentence in enumerate(ssample):
-            intrasentsim[sid,lid] = Sim.intra_similarity(ssample_bert_encodings[sid][lid][0])
-
-
-    # DUMP PICKLES
-    if opt.save_results:
-<<<<<<< HEAD
-        logger('   dumping similarity measures to '+str(opt.outdir) )
-=======
-        logger.info('   dumping similarity measures to '+str(opt.outdir) )
-        to_pickle = to_pickle[:, 0:wid]
->>>>>>> 64751148b5852182e8c0309ba1d85fdd6b22d0e0
-        selfsimfname=str(opt.outdir)+'BERTselfsim_samplesize'+str(opt.selfsim_samplesize)+'.pkl'
-        pickle.dump(ss_to_pickle, open(selfsimfname, 'bw'))
-        
-        intrasimfname=str(opt.outdir)+'BERTintrasentsim_samplesize'+str(opt.intrasentsim_samplesize)+'.pkl'
-        pickle.dump(tensor_intrasentsim.numpy(), open(intrasimfname, 'bw'))
-
-        wordsfname=str(opt.outdir)+'sampledwords4selfsim_samplesize'+str(opt.selfsim_samplesize)+'.pkl'
-        pickle.dump(wsample,open(wordsfname,'wb'))
-
-        mevfname=str(opt.outdir)+'BERTmev_samplesize'+str(opt.selfsim_samplesize)+'.pkl'
-        pickle.dump(mev_to_pickle,open(mevfname,'wb'))
-        
-        b1fname=str(opt.outdir)+'BERTbaseline1_samplesize'+str(opt.selfsim_samplesize)+'.pkl'
-        pickle.dump(baselines_metric1,open(b1fname,'wb'))
-    else:
-        logger.info('   use --save_results options to save results')
-
-    return self_similarities, intrasentsim, mev
- 
-<<<<<<< HEAD
-
-
-def huggingface_compute_metrics(w2s,ssample,opt,hf_model):
-    model = Loader.huggingfaceModel(hf_model, opt.cuda)
-
-    logger('   self-similarity and max explainable variance ')
-    #compute BERT embeddings
-    hf_tokens, hf_tokenization =  model.tokenize(w2s.new_sents)
-    hf_encodings = model.encode(hf_tokens)
-    hf_encodings = model.correct_bert_tokenization(hf_encodings, hf_tokenization)
-
-    # get selfsim
     self_similarities = {}
     mev={}
     to_pickle = np.zeros((model.N_BERT_LAYERS, opt.selfsim_samplesize))
@@ -302,7 +187,7 @@ def huggingface_compute_metrics(w2s,ssample,opt,hf_model):
         wid += 1
 
     # INTRA-SENTENCE SIMILARITY
-    logger('   intra-sentence similarity ')
+    logger.info('   intra-sentence similarity ')
     #compute BERT embeddings
     ssample_bert_tokens, ssample_bert_tokenization =  model.tokenize(ssample)
     ssample_bert_encodings = model.encode(ssample_bert_tokens)
@@ -317,7 +202,7 @@ def huggingface_compute_metrics(w2s,ssample,opt,hf_model):
 
     # DUMP PICKLES
     if opt.save_results:
-        logger('   dumping similarity measures to '+str(opt.outdir) )
+        logger.info('   dumping similarity measures to '+str(opt.outdir) )
         to_pickle = to_pickle[:, 0:wid]
         selfsimfname=str(opt.outdir)+'BERTselfsim_samplesize'+str(opt.selfsim_samplesize)+'.pkl'
         pickle.dump(to_pickle, open(selfsimfname, 'bw'))
@@ -328,15 +213,10 @@ def huggingface_compute_metrics(w2s,ssample,opt,hf_model):
         wordsfname=str(opt.outdir)+'sampledwords4selfsim_samplesize'+str(opt.selfsim_samplesize)+'.pkl'
         pickle.dump(wsample,open(wordsfname,'wb'))
     else:
-        logger('   use --save_results options to save results')
+        logger.info('   use --save_results options to save results')
 
     return self_similarities, intrasentsim, mev
-
-def logger(string):
-    print(' | ',datetime.now().replace(microsecond=0), '|   '+string)
-
-=======
->>>>>>> 64751148b5852182e8c0309ba1d85fdd6b22d0e0
+ 
 
 def update_opts_to_devmode(opts):
     logger.info('dev mode activated... overriding parameters:')

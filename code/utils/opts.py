@@ -52,8 +52,8 @@ def get_parser():
     parser.add_argument("--huggingface_models", '-hfmodels', type=str, required=False, nargs='+', default=['Helsinki-NLP/opus-mt-en-de','Helsinki-NLP/opus-mt-en-fr','Helsinki-NLP/opus-mt-en-ee','Helsinki-NLP/opus-mt-en-fi','Helsinki-NLP/opus-mt-en-cs','Helsinki-NLP/opus-mt-en-it','Helsinki-NLP/opus-mt-en-sv','Helsinki-NLP/opus-mt-en-ru','Helsinki-NLP/opus-mt-en-el'],
                         help="name of the huggingface model(s) to use. If more than one, separate with a space")
 
-    parser.add_argument("--bert_model",  "-bert", type=str, required=False, default="bert-base-uncased",
-                        help="Which BERT to use for contextualized embeddings [bert_base_uncased | bert_cased].")
+    parser.add_argument("--bert_models",  "-bert", type=str, required=False,  nargs='+', default=["bert-base-uncased","bert-base-cased"],
+                        help="Which BERT to use for contextualized embeddings [bert-base-uncased | bert-base-cased].")
 
     parser.add_argument("--selfsim_samplesize", "-self_ss",required=False, type=int, default=2500,
                         help='size of the words sample to extract for computing the self-similarity')

@@ -40,7 +40,7 @@ def get_parser():
                               "if not specified, will compute embeddings for all specified models in bert, huggingface & onmt"\
                               "and save them into ../embeddings/[modelname].pkl")
 
-    parser.add_argument("--load_w2s_path", type=str, required=False, 
+    parser.add_argument("--load_w2s", type=str, required=False, 
                         help="path to the word to sentence indexer. Saved as default in ../embeddings/w2s.pkl")
 
     parser.add_argument("--onmt_model", type=str, required=False,

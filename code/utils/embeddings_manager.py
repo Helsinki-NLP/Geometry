@@ -146,8 +146,8 @@ def BERT_compute_embeddings(w2s,opt,bmodel):
     logger.info('   self-similarity and max explainable variance ')
     #compute BERT embeddings
     bert_tokens, bert_tokenization =  model.tokenize(w2s.new_sents.copy())
-    if (opt.dev_params and len(bert_tokens)>17):
-        bert_tokens = bert_tokens[0:17] 
+    #if (opt.dev_params and len(bert_tokens)>17):
+    #    bert_tokens = bert_tokens[0:17] 
     bert_encodings = model.encode(bert_tokens)
     bert_encodings = model.correct_bert_tokenization(bert_encodings, bert_tokenization)
     
@@ -164,7 +164,7 @@ def huggingface_compute_embeddings(w2s,opt,hfmodel):
     #compute embeddings
 
     #tokd_sentences = model.tokenize(w2s.new_sents.copy())
-    sentences= w2s.new_sents.copy()[0:19] if opt.dev_params else w2s.new_sents.copy()
+    sentences= w2s.new_sents.copy()#[0:19] if opt.dev_params else w2s.new_sents.copy()
     hf_tokd, hf_encodings =  model.encode(sentences)
     hf_encodings = model.correct_tokenization(hf_tokd, hf_encodings)#, hf_tokenization)
 

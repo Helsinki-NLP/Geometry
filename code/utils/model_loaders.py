@@ -16,7 +16,7 @@ from utils.logger import logger
 class bertModel():
 
     def __init__(self, bert_type='bert-base-uncased', cuda=False):
-        self.N_BERT_LAYERS = 12
+        self.N_LAYERS = 12
         self.ENC_DIM = 768
 
         self.tokenizer = BertTokenizer.from_pretrained(bert_type)
@@ -73,7 +73,7 @@ class bertModel():
             #print(bert_sentence)
 
             all_layers = []
-            for layer in range(self.N_BERT_LAYERS):
+            for layer in range(self.N_LAYERS):
                 current_layer = []
 
                 prev_token = bert_encoding[layer][0,0,:] # This is [CLS]!
@@ -97,7 +97,7 @@ class bertModel():
 
                 all_layers.append(current_layer_tensor.squeeze())
  
-            corrected_sentences.append(torch.stack(all_layers)) # [n_sents, N_BERT_LAYERS, sent_length, h_hidden]
+            corrected_sentences.append(torch.stack(all_layers)) # [n_sents, N_LAYERS, sent_length, h_hidden]
            
         #print('cbt: ', bert_sentences[0])
         #print('cbt: ', corrected_sentences[0][0].shape)
@@ -132,6 +132,7 @@ class huggingfaceModel():
         
         self.N_ENC_LAYERS = self.model.config.encoder_layers
         self.N_DEC_LAYERS = self.model.config.decoder_layers
+        self.N_LAYERS = 1+self.N_ENC_LAYERS +self.N_DEC_LAYERS 
         self.DIM_HIDDEN = self.model.config.d_model # dimendion of the model
         self.bsz = 256 if cuda else 16
     
@@ -147,8 +148,8 @@ class huggingfaceModel():
                                                       each element is a list of size nlayers(1+N_ENC_LAYERS+N_DEC_LAYERS)
                                                      each entry a tensor of size [sentlength, self.DIM_HIDDEN]
         '''
-        nlayers = 1+self.N_ENC_LAYERS +self.N_DEC_LAYERS 
-        encoded_sentences = [[None for i in range(nlayers)] for j in range(numsents)]
+        
+        encoded_sentences = [[None for i in range(self.N_LAYERS)] for j in range(numsents)]
         
         for i, (batch, encodings) in enumerate(zip(tokd_batches, encoded_sentences_batched)):
             for nlay, layer_values in enumerate(encodings): 
@@ -189,24 +190,15 @@ class huggingfaceModel():
         
         encoded_sentences = self.unbatch(encoded_sentences, tokd_batches, len(sentences))
         '''
-        #encoded_sentences = [i.to('cpu') for i in encoded_sentences]
         
         encoded_sentences = []
-        memdict=[]
         for sent in tqdm(sentences):
             tokdsent = self.tokenizer.prepare_translation_batch(src_texts=[' '.join(sent)]) 
             tokdsent = {k:v.to(self.device) for k,v in tokdsent.items()}
             model_outputs = self.model.forward(**tokdsent) 
             #dec_out=model_outputs[:3] # x, all_hidden_states(output_hidden_states=True), all_self_attns(output_attentions=True)
             #enc_out=model_outputs[3:] # x, encoder_states(output_hidden_states=True), all_attentions(output_attentions=True)
-            #tokd_sentences.append(tokdsent)  
             encoded_sentences.append( [x.detach().to('cpu') for x in model_outputs[4]+model_outputs[1]]  )
-
-            #torch.cuda.empty_cache()
-            #encoded_sentences.append( model_outputs[4]+model_outputs[1])
-            memdict.append(torch.cuda.memory_stats(self.device))
-
-            print(memdict[-1]['active.all.current'],memdict[-1]['active.all.peak'])
 
         tokd_sentences = self.tokenize(sentences)
         return tokd_sentences, encoded_sentences
@@ -215,13 +207,12 @@ class huggingfaceModel():
     
     def correct_tokenization(self, tokd_sentences, encodings):
         logger.info('   correcting for tokenization...')
-        nlayers=self.N_ENC_LAYERS + self.N_DEC_LAYERS + 1
         corrected_sentences = []
 
         for encoding, sentence in tqdm(zip(encodings, tokd_sentences)):
             #sentence.append('▁<eos>')
             all_layers = []
-            for layer in range(nlayers):
+            for layer in range(self.N_LAYERS):
                 current_layer = []
 
                 prev_token = encoding[layer][0,:] 
@@ -245,7 +236,7 @@ class huggingfaceModel():
 
                 all_layers.append(current_layer_tensor.detach())
         
-            corrected_sentences.append(torch.stack(all_layers)) # [n_sents, N_BERT_LAYERS, sent_length, h_hidden]
+            corrected_sentences.append(torch.stack(all_layers)) # [n_sents, N_LAYERS, sent_length, h_hidden]
            
         return corrected_sentences
 

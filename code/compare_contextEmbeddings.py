@@ -39,9 +39,10 @@ def  main(opts):
     w2s=make_or_load_w2s(opt,sents)
         
     all_embeddings = Emb.compute_or_load_embeddings(opt,w2s)
-
+    ssample = sample_sents(opt,sents)
+    metrics={}
     for modname, embs in all_embeddings.items():
-        compute_similarity_metrics()
+        metrics[modname] = compute_similarity_metrics(w2s,ssample,modname, embs)
 
 
 
@@ -90,9 +91,9 @@ def make_or_load_w2s(opt, sents):
     If none of the above, then create w2s and save it. 
     '''
     fbasename=os.path.basename(opt.data_path).strip('.txt')
-    if opt.load_w2s_path:
-        logger.info(f'loading w2s indexer from {opt.load_w2s_path}') 
-        w2s =  pickle.load(open(opt.load_w2s_path,'rb')) 
+    if opt.load_w2s:
+        logger.info(f'loading w2s indexer from {opt.load_w2s}') 
+        w2s =  pickle.load(open(opt.load_w2s,'rb')) 
     elif Path(f'../embeddings/{fbasename}_w2s.pkl').is_file():
         logger.info(f'loading w2s indexer from ../embeddings/{fbasename}_w2s.pkl') 
         w2s =  pickle.load(open(f'../embeddings/{fbasename}_w2s.pkl','rb')) 
@@ -138,84 +139,70 @@ def make_indexer(opt,sents):
     fbasename=os.path.basename(opt.data_path).strip('.txt')
     fname=f'{fbasename}_w2s' 
     logger.info(f'Dumping word2sentence indexer at location: ../embeddings/{fname}.pkl')
-    pickle.dump(w2s,open(f'../embeddings/{fname}.plk','wb'))
+    pickle.dump(w2s,open(f'../embeddings/{fname}.pkl','wb'))
 
     return w2s
 
-def create_samples(opt,w2s,sents):
+def sample_sents(opt,sents):
     '''
-    get word samples and sentence samples
+    sample sentences if required in opt
     INPUT:
         - opt 
-        - w2s
         - sents
     OUTPUT:
-        - wsample[dict[word:tuple]]: sampled words and their occurences in the corpus
-        - ssample[list]:  
+        - ssample[tuple]:  (sampled indexes, sampled sentences)
     '''
-    
-    logger.info("Sampling {0} sentences to compute self-similarity ... ".format(opt.intrasentsim_samplesize))
-    # sample sentences for intra sent similarity
-    ssample_idx = [random.randint(0,len(sents)-1) for i in range(opt.intrasentsim_samplesize)]
-    ssample = [sents[idx] for idx in ssample_idx]
-    
-    return wsample, ssample
+    if opt.use_samples:
+        logger.info("Sampling {0} sentences to compute intra-sentence similarity ... ".format(opt.intrasentsim_samplesize))
+        # sample sentences for intra sent similarity
+        ssample_idx = [random.randint(0,len(sents)-1) for i in range(opt.intrasentsim_samplesize)]
+        ssample = [sents[idx] for idx in ssample_idx]
+    else:
+        ssample_idx = [i for i in range(len(sents))]
+        ssample = sents
+    return (ssample_idx, ssample)
 
 
-def compute_similarity_metrics():
+def compute_similarity_metrics(w2s,ssample,modname, embeddings):
     logger.info('   self-similarity and max explainable variance ')
-    self_similarities = {}
-    mev={}
-    to_pickle = np.zeros((model.N_BERT_LAYERS, opt.selfsim_samplesize))
-    wid = 0
-    for word,occurrences in w2s.w2sdict.items():
-        for layer in range(model.N_BERT_LAYERS):
-            embs4thisword = torch.zeros((len(occurrences), model.ENC_DIM))
-            #encodings = []
+    N_LAYERS, _ , HDIM = embeddings[0].shape
+    # SELF-SIMILARITY & MAXIMUM EXPLAINABLE VARIANCE
+    selfsim = np.zeros((len(w2s.w2sdict), N_LAYERS ))
+    mev = np.zeros((len(w2s.w2sdict), N_LAYERS ))
+    for wid, occurrences in enumerate(w2s.w2sdict.values()):
+        for layer in range(N_LAYERS):
+            embs4thisword = torch.zeros((len(occurrences), HDIM))
             for i, idx_tuple in enumerate(occurrences):
                 sentence_id = idx_tuple[0]
                 word_id = idx_tuple[1]
-                embs4thisword[i,:] = bert_encodings[sentence_id][layer][0,word_id,:]
-                #encodings.append(bert_encodings[sentence_id][layer][0,word_id,:])
+                embs4thisword[i,:] = embeddings[sentence_id][layer, word_id,:]
 
-            self_similarities.setdefault(word,{}).setdefault(layer,{})
-            self_similarities[word][layer] = Sim.self_similarity(embs4thisword).item()
-            mev.setdefault(word,{}).setdefault(layer,{})
-            mev[word][layer] = Sim.max_expl_var(embs4thisword)
-            to_pickle[layer,wid] = self_similarities[word][layer]
-            #print(word, layer, self_similarities[word][layer])
-        wid += 1
+            selfsim[wid, layer] = Sim.self_similarity(embs4thisword).item()
+            mev[wid, layer] = Sim.max_expl_var(embs4thisword)
+
 
     # INTRA-SENTENCE SIMILARITY
     logger.info('   intra-sentence similarity ')
-    #compute BERT embeddings
-    ssample_bert_tokens, ssample_bert_tokenization =  model.tokenize(ssample)
-    ssample_bert_encodings = model.encode(ssample_bert_tokens)
-    ssample_bert_encodings = model.correct_bert_tokenization(ssample_bert_encodings, ssample_bert_tokenization)
+    intrasentsim = np.zeros((len(ssample[0]), N_LAYERS))
+    for layer in range(N_LAYERS):
+        for sid, sentence in zip(*ssample):
+            intrasentsim[sid,layer] = Sim.intra_similarity(embeddings[sid][layer])
+
     
-    # get intrasentsim
-    intrasentsim = torch.zeros((opt.intrasentsim_samplesize, model.N_BERT_LAYERS))
-    for lid, layer in enumerate(range(model.N_BERT_LAYERS)):
-        for sid, sentence in enumerate(ssample):
-            intrasentsim[sid,lid] = Sim.intra_similarity(ssample_bert_encodings[sid][lid][0])
+    return selfsim, intrasentsim, mev
 
-
+def dump_similarity_metrics(opt, metrics):
     # DUMP PICKLES
     if opt.save_results:
         logger.info('   dumping similarity measures to '+str(opt.outdir) )
-        to_pickle = to_pickle[:, 0:wid]
-        selfsimfname=str(opt.outdir)+'BERTselfsim_samplesize'+str(opt.selfsim_samplesize)+'.pkl'
-        pickle.dump(to_pickle, open(selfsimfname, 'bw'))
         
-        intrasimfname=str(opt.outdir)+'BERTintrasentsim_samplesize'+str(opt.intrasentsim_samplesize)+'.pkl'
-        pickle.dump(tensor_intrasentsim.numpy(), open(intrasimfname, 'bw'))
+        outfilename=str(opt.outdir)+'similarity.pkl' if not opt.dev_params else str(opt.outdir)+'similarity_dev.pkl'
+        pickle.dump(metrics, open(outfilename, 'bw'))
 
-        wordsfname=str(opt.outdir)+'sampledwords4selfsim_samplesize'+str(opt.selfsim_samplesize)+'.pkl'
-        pickle.dump(wsample,open(wordsfname,'wb'))
     else:
         logger.info('   use --save_results options to save results')
 
-    return self_similarities, intrasentsim, mev
+    
  
 
 def update_opts_to_devmode(opts):

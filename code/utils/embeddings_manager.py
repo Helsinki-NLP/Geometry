@@ -5,6 +5,7 @@ import h5py
 import pickle
 import os
 from tqdm import tqdm
+import torch
 
 
 from utils.logger import logger

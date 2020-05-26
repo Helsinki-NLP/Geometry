@@ -217,20 +217,39 @@ def compute_or_load_embeddings(opt,w2s):
     else:
         # load embeddings
         logger.info('Loading embeddings...') 
+        ''' 
         if isinstance(opt.load_embeddings_path,list):
+            print(opt.load_embeddings_path)
+            logger.info('Is a list')
             for file in opt.load_embeddings_path:
                 fname=os.path.basename(file).split('.')[0]
                 all_embeddings[fname] = loadh5file(file)
         else:
             path = opt.load_embeddings_path
+            logger.info(f'{path}...')
             if os.path.isdir(path):
+                logger.info('is a directory')
                 for file in os.listdir(path):
                     fname, extension =os.path.basename(file).split('.')
                     if extension == 'h5':
                         all_embeddings[fname] = loadh5file(path+file)
         
             else:
+                logger.info('is a file')
                 fname = os.path.basename(path).split('.')[0]
                 all_embeddings[fname]= loadh5file(path) 
-    
+        '''
+        for path in opt.load_embeddings_path:
+            if os.path.isdir(path):
+                for file in os.listdir(path):
+                    if os.path.isfile(path+file):
+                        fname, extension = os.path.basename(file).split('.')
+                        if extension == 'h5':
+                            all_embeddings[fname] = loadh5file(path+file)
+        
+            else:
+                fname = os.path.basename(path).split('.')[0]
+                all_embeddings[fname]= loadh5file(path) 
+
+
     return all_embeddings

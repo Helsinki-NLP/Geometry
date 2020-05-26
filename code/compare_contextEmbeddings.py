@@ -41,10 +41,12 @@ def  main(opts):
     all_embeddings = Emb.compute_or_load_embeddings(opt,w2s)
     ssample = sample_sents(opt,sents)
     metrics={}
+    logger.info('Computing the metrics')
     for modname, embs in all_embeddings.items():
         metrics[modname] = compute_similarity_metrics(w2s,ssample,modname, embs)
-
-
+   
+    logger.info('Saving the metrics')
+    dump_similarity_metrics(opt, metrics)
 
 
     '''
@@ -188,7 +190,6 @@ def compute_similarity_metrics(w2s,ssample,modname, embeddings):
         for sid, sentence in zip(*ssample):
             intrasentsim[sid,layer] = Sim.intra_similarity(embeddings[sid][layer])
 
-    
     return selfsim, intrasentsim, mev
 
 def dump_similarity_metrics(opt, metrics):

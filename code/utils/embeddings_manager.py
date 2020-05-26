@@ -5,6 +5,7 @@ import h5py
 import pickle
 import os
 from tqdm import tqdm
+from copy import deepcopy
 import torch
 
 
@@ -35,8 +36,9 @@ class w2s:
             for j,word in enumerate(sentence):
                 if word in wsample:
                     self.w2sdict[word].append((i,j))
-                    new_sentences.append(i)
-        self.idx2newsents = set(new_sentences)
+                    #if i not in new_sentences:
+                    #    new_sentences.append(i)
+        #self.idx2newsents = set(new_sentences)
     
     def update_indexes(self,sents):
         '''
@@ -130,14 +132,14 @@ def loadh5file(load_path):
 def saveh5file(outdir,fname,embeddings):
     '''save embeddings in h5 format'''
     outfile=f'{outdir}/{fname}.h5'
-    logger.info('   saving to {0}'.format(outfile))
+    logger.info('   saving embeddings to {0}'.format(outfile))
     with h5py.File(outfile, 'w') as fout:
         for idx,embs in tqdm(enumerate(embeddings)):
             fout.create_dataset(str(idx), embs.shape, dtype='float32', data=embs)
             
 
 
-def BERT_compute_embeddings(w2s,opt,bmodel):
+def BERT_compute_embeddings(samples,opt,bmodel):
 
     # load model + tokenizer
     model = Loader.bertModel(bmodel, opt.cuda)
@@ -145,18 +147,20 @@ def BERT_compute_embeddings(w2s,opt,bmodel):
     # SELF-SIMILARITY OF WORDS
     logger.info('   self-similarity and max explainable variance ')
     #compute BERT embeddings
-    bert_tokens, bert_tokenization =  model.tokenize(w2s.new_sents.copy())
+    bert_tokens, bert_tokenization =  model.tokenize(samples)
     #if (opt.dev_params and len(bert_tokens)>17):
     #    bert_tokens = bert_tokens[0:17] 
     bert_encodings = model.encode(bert_tokens)
-    bert_encodings = model.correct_bert_tokenization(bert_encodings, bert_tokenization)
+    corrected_sentences, bert_encodings = model.correct_bert_tokenization(bert_encodings, bert_tokenization)
     
     outfile=f'{bmodel}' if not opt.dev_params else f'{bmodel}_dev'
     saveh5file(opt.outdir,outfile,bert_encodings)
-    return bert_encodings
+    logger.info('   saving tokenized sentences to {0}'.format(f'{opt.outdir}/{outfile}_tokd.pkl'))
+    pickle.dump(corrected_sentences, open(f'{opt.outdir}/{outfile}_tokd.pkl','wb'))
+    return corrected_sentences, bert_encodings
 
 
-def huggingface_compute_embeddings(w2s,opt,hfmodel):
+def huggingface_compute_embeddings(samples,opt,hfmodel):
     # load model + tokenizer
     model = Loader.huggingfaceModel(hfmodel, opt.cuda)
 
@@ -164,55 +168,60 @@ def huggingface_compute_embeddings(w2s,opt,hfmodel):
     #compute embeddings
 
     #tokd_sentences = model.tokenize(w2s.new_sents.copy())
-    sentences= w2s.new_sents.copy()#[0:19] if opt.dev_params else w2s.new_sents.copy()
-    hf_tokd, hf_encodings =  model.encode(sentences)
-    hf_encodings = model.correct_tokenization(hf_tokd, hf_encodings)#, hf_tokenization)
+    
+    hf_tokd, hf_encodings =  model.encode(samples)
+    corrected_sentences, hf_encodings = model.correct_tokenization(hf_tokd, hf_encodings)#, hf_tokenization)
 
     outfile=os.path.basename(hfmodel) if not opt.dev_params else f'{os.path.basename(hfmodel)}_dev'
     saveh5file(opt.outdir,outfile,hf_encodings)
-    return hf_encodings
+    logger.info('   saving tokenized sentences to {0}'.format(f'{opt.outdir}/{outfile}_tokd.pkl'))
+    pickle.dump(corrected_sentences, open(f'{opt.outdir}/{outfile}_tokd.pkl','wb'))
+    return corrected_sentences, hf_encodings
 
 
 
 
 
 
-def compute_or_load_embeddings(opt,w2s):
+def compute_or_load_embeddings(opt, samples):
     '''
     loads embeddings if --load_embeddings_path is given
     otherwise computes and saves embeddings given by --bert_model and --huggingface_models
 
     INPUT:
         - opt
-        - w2s[class]: see above
+        - samples[list]: 1 sentece per list entry
     OUTPUT:
         - all_embeddings[dict[modelname:embeddings]]: dictionary with all embeddings.
                                                       either loads them with --load_embeddings_path
 
     '''
     all_embeddings={}
+    all_toks = {}
     if not opt.load_embeddings_path:
+
         # compute embeddings using BERT
         logger.info('BERT models:')
         if isinstance(opt.bert_models, list):
             for i, bmodel in enumerate(opt.bert_models):
-                logger.info('   [{0}] {1} embeddings: computing & saving embeddings'.format(i, bmodel))
-                all_embeddings[bmodel] = BERT_compute_embeddings(w2s, opt, bmodel)
+                logger.info(' [{0}] {1} embeddings: computing & saving embeddings'.format(i, bmodel))
+                all_toks[bmodel], all_embeddings[bmodel] = BERT_compute_embeddings(deepcopy(samples), opt, bmodel)
         else:
             bmodel=opt.bert_models
-            logger.info('   [0] {1} embeddings: computing & saving embeddings'.format(i, bmodel))
-            all_embeddings[bmodel] = BERT_compute_embeddings(w2s, opt, bmodel)
+            logger.info(' [0] {1} embeddings: computing & saving embeddings'.format(i, bmodel))
+            all_toks[bmodel], all_embeddings[bmodel] = BERT_compute_embeddings(deepcopy(samples), opt, bmodel)
     
+
         # compute embeddings using HUGGINGFACE 
         logger.info('HUGGINGFACE models:')
         if isinstance(opt.huggingface_models, list):
             for i, hfmodel in enumerate(opt.huggingface_models):
-                logger.info('   [{0}] {1} embeddings: computing & saving embeddings'.format(i,hfmodel))
-                all_embeddings[hfmodel] = huggingface_compute_embeddings(w2s,opt,hfmodel)
+                logger.info(' [{0}] {1} embeddings: computing & saving embeddings'.format(i,hfmodel))
+                all_toks[hfmodel], all_embeddings[hfmodel] = huggingface_compute_embeddings(deepcopy(samples),opt,hfmodel)
         else:
             hfmodel=opt.huggingface_models
-            logger.info('   [0] {0} embeddings: computing & saving embeddings'.format(hfmodel))
-            all_embeddings[hfmodel] = huggingface_compute_embeddings(w2s,opt,hfmodel)
+            logger.info(' [0] {0} embeddings: computing & saving embeddings'.format(hfmodel))
+            all_toks[hfmodel], all_embeddings[hfmodel] = huggingface_compute_embeddings(deepcopy(samples),opt,hfmodel)
 
     else:
         # load embeddings
@@ -246,10 +255,12 @@ def compute_or_load_embeddings(opt,w2s):
                         fname, extension = os.path.basename(file).split('.')
                         if extension == 'h5':
                             all_embeddings[fname] = loadh5file(path+file)
-        
+                        if extension == 'pkl':
+                            all_toks[fname] = pickle.load(open(path+file,'br'))
             else:
                 fname = os.path.basename(path).split('.')[0]
                 all_embeddings[fname]= loadh5file(path) 
+                all_toks[fname] = pickle.load(open(path,'br'))
+                
 
-
-    return all_embeddings
+    return all_toks, all_embeddings

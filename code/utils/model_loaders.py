@@ -35,7 +35,7 @@ class bertModel():
         tokens_tensors = []
         for i in tqdm(range(len(sentences))):
             # add BERT tags
-            sentences[i] = ' '.join(['[CLS]'] + sentences[i] + ['[SEP]'])
+            sentences[i] = '[CLS] ' + sentences[i] + ' [SEP]'
             tokenized_sentences.append(self.tokenizer.tokenize(sentences[i]))
             
             # Convert token to vocabulary indices
@@ -43,6 +43,7 @@ class bertModel():
             # Convert inputs to PyTorch tensors
             tokens_tensor = torch.tensor([indexed_tokens])
             tokens_tensors.append(tokens_tensor)
+        
 
         return tokens_tensors, tokenized_sentences
 
@@ -61,14 +62,14 @@ class bertModel():
             with torch.no_grad():
                 encoded_layers, _ = self.model(tokens_tensors[i])
             
-            encoded_layers = [i.to('cpu') for i in encoded_layers]
+            encoded_layers = [i.detach().to('cpu') for i in encoded_layers]
             encoded_sentences.append(encoded_layers)
             
         return encoded_sentences
 
     def correct_bert_tokenization(self, bert_encodings, bert_sentences):
         logger.info('   correcting for BERT subword tokenization...')
-        corrected_sentences = []
+        corrected_encodings = []
         for bert_encoding, bert_sentence in tqdm(zip(bert_encodings, bert_sentences)):
             #print(bert_sentence)
 
@@ -95,13 +96,17 @@ class bertModel():
                 # Get rid of the [CLS] and [SEP]
                 current_layer_tensor = current_layer_tensor[:,1:-1,:]
 
-                all_layers.append(current_layer_tensor.squeeze())
+                all_layers.append(current_layer_tensor.squeeze().detach())
  
-            corrected_sentences.append(torch.stack(all_layers)) # [n_sents, N_LAYERS, sent_length, h_hidden]
-           
+            corrected_encodings.append(torch.stack(all_layers)) # [n_sents, N_LAYERS, sent_length, h_hidden]
+
+        corrected_sentences = []        
+        for tokdsent in bert_sentences:
+            corrected_sentences.append(' '.join(tokdsent[1:-1]).replace(' ##','').split(' ') )
+
         #print('cbt: ', bert_sentences[0])
         #print('cbt: ', corrected_sentences[0][0].shape)
-        return corrected_sentences
+        return corrected_sentences, corrected_encodings
 
 
 def load_onmt_model():
@@ -137,7 +142,7 @@ class huggingfaceModel():
         self.bsz = 256 if cuda else 16
     
     def tokenize(self, sentences): 
-        return [self.tokenizer.tokenize(' '.join(sent)) for sent in sentences] 
+        return [self.tokenizer.tokenize(sent) for sent in sentences] 
 
 
     def unbatch(self, encoded_sentences_batched, tokd_batches, numsents):
@@ -193,7 +198,7 @@ class huggingfaceModel():
         
         encoded_sentences = []
         for sent in tqdm(sentences):
-            tokdsent = self.tokenizer.prepare_translation_batch(src_texts=[' '.join(sent)]) 
+            tokdsent = self.tokenizer.prepare_translation_batch(src_texts=[sent]) 
             tokdsent = {k:v.to(self.device) for k,v in tokdsent.items()}
             model_outputs = self.model.forward(**tokdsent) 
             #dec_out=model_outputs[:3] # x, all_hidden_states(output_hidden_states=True), all_self_attns(output_attentions=True)
@@ -207,7 +212,7 @@ class huggingfaceModel():
     
     def correct_tokenization(self, tokd_sentences, encodings):
         logger.info('   correcting for tokenization...')
-        corrected_sentences = []
+        corrected_encodings = []
 
         for encoding, sentence in tqdm(zip(encodings, tokd_sentences)):
             #sentence.append('▁<eos>')
@@ -234,11 +239,15 @@ class huggingfaceModel():
 
                 current_layer_tensor = torch.stack(current_layer, dim=0)
 
-                all_layers.append(current_layer_tensor.detach())
+                all_layers.append(current_layer_tensor.detach().squeeze())
         
-            corrected_sentences.append(torch.stack(all_layers)) # [n_sents, N_LAYERS, sent_length, h_hidden]
-           
-        return corrected_sentences
+            corrected_encodings.append(torch.stack(all_layers)) # [n_sents, N_LAYERS, sent_length, h_hidden]
+        
+        corrected_sentences = []
+        for sent in tokd_sentences:
+            corrected_sentences.append(''.join(sent).split('▁')[1:] )
+
+        return corrected_sentences, corrected_encodings
 
 
         

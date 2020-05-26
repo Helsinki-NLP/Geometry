@@ -29,23 +29,30 @@ def  main(opts):
     STS_path = opt.data_path
     with open(STS_path, 'r') as f:
         samples = f.readlines()
+    
+    samples = [sent.strip() for sent in samples]
+    if opt.dev_params:
+        samples=samples[:20]
+    #sents = []
+    #for sent in samples:
+    #    sent = sent.strip()
+    #    sent = re.findall(r'[\w]+|\.|,|\?|\!|;|:|\'|\(|\)|/',sent) # tokenization is a model_loader class attribute. Need to undo this there.
+    #    sents.append(sent)
+    
+    all_toks, all_embeddings = Emb.compute_or_load_embeddings(opt, samples)
 
-    sents = []
-    for sent in samples:
-        sent = sent.strip()
-        sent = re.findall(r'[\w]+|\.|,|\?|\!|;|:|\'|\(|\)|/',sent) # tokenization is a model_loader class attribute. Need to undo this there.
-        sents.append(sent)
-
-    w2s=make_or_load_w2s(opt,sents)
-        
-    all_embeddings = Emb.compute_or_load_embeddings(opt,w2s)
-    ssample = sample_sents(opt,sents)
+    
+    ssample = sample_sents(opt,samples)
+    
     metrics={}
-    logger.info('Computing the metrics')
-    for modname, embs in all_embeddings.items():
+    logger.info('Computing metrics')
+    for tokdsents, (modname, embs) in zip(* (all_toks.values(), all_embeddings.items()) ):
+        #w2s=make_or_load_w2s(opt,tokdsents)
+        logger.info(' [*] MODEL: {0} '.format(modname))
+        w2s=make_indexer(opt,tokdsents,modname)
         metrics[modname] = compute_similarity_metrics(w2s,ssample,modname, embs)
    
-    logger.info('Saving the metrics')
+    logger.info('Saving metrics')
     dump_similarity_metrics(opt, metrics)
 
 
@@ -104,7 +111,7 @@ def make_or_load_w2s(opt, sents):
     
     return w2s
 
-def make_indexer(opt,sents):
+def make_indexer(opt,sents,modname):
     '''
     index word occurences in the given corpus
     INPUT:
@@ -113,17 +120,18 @@ def make_indexer(opt,sents):
     OUTPUT:
         - w2s[class]: class to manage the dictionary that points words to their occurences in the corpus as tuples. 
     '''
-    logger.info('Selecting words that occured at least 5 times')
+    logger.info('   Selecting words that occured at least 5 times')
     allwords=Counter(functools.reduce(operator.iconcat, sents, []))
     bow5x= [key for key,count in allwords.items() if count > 4]
     #clean symbols
-    for sym in [',', '.', ':','?','!',';','_']:
-        _ = bow5x.pop(bow5x.index(sym))
+    for sym in [',', '.', ':', '?', '!', ';', '_', '-', "'", '"','[CLS]', '[SEP]']:
+        if sym in bow5x:
+            _ = bow5x.pop(bow5x.index(sym))
 
-    logger.info('Selecting words that occured less than 1001 times') # Kawin did this, i think
+    logger.info('   Selecting words that occured less than 1001 times') # Kawin did this, i think
     bow1k= set([key for key,count in allwords.items() if count <= 1000])
     bow5x = set(bow5x).intersection(bow1k)
-
+    '''
     # sample words for self-similarity
     logger.info('Generating w2s dictionary')
     if opt.use_samples:
@@ -137,10 +145,11 @@ def make_indexer(opt,sents):
         w2s.update_indexes(sents)
     else:
         w2s = Emb.w2s(sents,bow5x)
-        w2s.update(sents)
+    '''
+    w2s = Emb.w2s(sents,bow5x)
     fbasename=os.path.basename(opt.data_path).strip('.txt')
-    fname=f'{fbasename}_w2s' 
-    logger.info(f'Dumping word2sentence indexer at location: ../embeddings/{fname}.pkl')
+    fname=f'w2s_{fbasename}_{modname}' 
+    logger.info(f'   Dumping word2sentence indexer at location: ../embeddings/{fname}.pkl')
     pickle.dump(w2s,open(f'../embeddings/{fname}.pkl','wb'))
 
     return w2s
@@ -216,7 +225,7 @@ def update_opts_to_devmode(opts):
     print('                                --selfsim_samplesize = 1')
     #print('                          huggingface_models = bert-base-uncased')
     opts.debug_mode = True
-    opts.use_samples=True
+    opts.use_samples=False
     opt.data_path=f'..{opt.data_path.strip(".txt")}_dev.txt'
     opts.intrasentsim_samplesize = 10
     opts.isotropycorrection_samplesize = 25

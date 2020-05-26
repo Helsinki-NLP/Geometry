@@ -177,6 +177,20 @@ def sample_sents(opt,sents):
 def compute_similarity_metrics(w2s,ssample,modname, embeddings):
     logger.info('   self-similarity and max explainable variance ')
     N_LAYERS, _ , HDIM = embeddings[0].shape
+
+    # BASELINE WORD SIMILARITIES [FOR ANISOTROPY CORRECTION OF METRIC 1]
+    baselines_metric1 = np.zeros((N_LAYERS,))
+    for layer in range(N_LAYERS):
+        all_embs_list = []
+        for wid, occurrences in enumerate(w2s.w2sdict.values()):
+            sentence_id = occurrence[0]
+            word_id = occurrence[1]
+            all_embs_list.append(embeddings[sentence_id][layer,word_id,:])
+
+        all_embs = torch.stack(all_embs_list, dim=0)
+        baselines_metric1[layer] = Sim.self_similarity(all_embs).item()
+
+
     # SELF-SIMILARITY & MAXIMUM EXPLAINABLE VARIANCE
     selfsim = np.zeros((len(w2s.w2sdict), N_LAYERS ))
     mev = np.zeros((len(w2s.w2sdict), N_LAYERS ))
@@ -188,7 +202,7 @@ def compute_similarity_metrics(w2s,ssample,modname, embeddings):
                 word_id = idx_tuple[1]
                 embs4thisword[i,:] = embeddings[sentence_id][layer, word_id,:]
 
-            selfsim[wid, layer] = Sim.self_similarity(embs4thisword).item()
+            selfsim[wid, layer] = Sim.self_similarity(embs4thisword).item() - baselines_metric1[layer]
             mev[wid, layer] = Sim.max_expl_var(embs4thisword)
 
 

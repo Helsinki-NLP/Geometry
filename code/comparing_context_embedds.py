@@ -239,7 +239,7 @@ def self_similarity(word,embs_type):
     #        for j in range(i+1,n):
     #           current_selfsim[key] += torch.cosine_similarity(embs[i],embs[j],dim=0)
             #print(word, i,j,current_selfsim)
-    coeff = 1/(n**2 - n)
+    coeff = 2/(n**2 - n)
     current_selfsim[0] *= coeff # ['normalized']
     current_selfsim[1] *= coeff # ['unnormalized']
     return current_selfsim
@@ -290,13 +290,18 @@ if __name__ == '__main__':
         bow.update(set(sent)) 
         sents.append(sent)
 
-    import ipdb; ipdb.set_trace()
-    print('Making bow that occured more than 5 times')
+
+    print('Selecting words that occured at least 5 times')
     allwords=Counter(functools.reduce(operator.iconcat, sents, []))
     bow5x= [key for key,count in allwords.items() if count > 4]
     #clean symbols
     for sym in [',', '.', ':','?','!',';','_']:
         _ = bow5x.pop(bow5x.index(sym))
+    
+    print('Selecting words that occured less than 1001 times') # Kavin did this, i think
+    bow1k= set([key for key,count in allwords.items() if count <= 1000])
+    
+    bow5x = set(bow5x).intersection(bow1k)
     print('Sampling...')
      # sample words for self-similarity
     wsample = random.sample(bow5x,opt.sample_size)
@@ -315,6 +320,7 @@ if __name__ == '__main__':
             w2s[key][i] = (new_idx, tpl[1])
 
     #load/compute embeddings from MT model
+    import ipdb; ipdb.set_trace()
     print('Running sentences containing sampled words through the mt-encoder')
     all_mt_embedds = get_encodings_from_onmt_model(new_sentences,opt) # get MT-embedds from set of sentences with the words needed
     bpedsents = all_mt_embedds.pop('sentences')

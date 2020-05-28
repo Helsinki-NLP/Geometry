@@ -31,11 +31,13 @@ class w2s:
             - newidxs[set]: subset of sentences, where sampled words appear
         '''
         self.w2sdict={word:[] for word in wsample} # word:[(sent1,pos1),(sent2,pos2)]
+        self.s2idxdict={idx:[] for idx in range(len(sents))} # word:[(sent1,pos1),(sent2,pos2)]
         new_sentences = []
         for i,sentence in tqdm(enumerate(sents)):
             for j,word in enumerate(sentence):
                 if word in wsample:
                     self.w2sdict[word].append((i,j))
+                    self.s2idxdict[i].append(j)
                     #if i not in new_sentences:
                     #    new_sentences.append(i)
         #self.idx2newsents = set(new_sentences)
@@ -54,8 +56,7 @@ class w2s:
         self.new_sents = [sents[idx] for idx in self.idx2newsents]
 
     def save_w2s(self,fname):
-        outfile=f'../embeddings/{fname}.plk'
-        print(coso)
+        outfile=f'../outputs/{fname}.pkl'
         with open(outfile, 'w') as fout:
             for idx,embs in tqdm(enumerate(embeddings)):
                 fout.create_dataset(str(idx), embs.shape, dtype='float32', data=embs)
@@ -131,10 +132,11 @@ def loadh5file(load_path):
 
 def saveh5file(outdir,fname,embeddings):
     '''save embeddings in h5 format'''
-    outfile=f'{outdir}/{fname}.h5'
-    logger.info('   saving embeddings to {0}'.format(outfile))
+    outfile=f'{outdir}/embeddings/{fname}.h5'
+    logger.info('     saving embeddings to {0}'.format(outfile))
+    os.system(f'mkdir -p {os.path.dirname(outfile)}')
     with h5py.File(outfile, 'w') as fout:
-        for idx,embs in tqdm(enumerate(embeddings)):
+        for idx,embs in enumerate(embeddings):
             fout.create_dataset(str(idx), embs.shape, dtype='float32', data=embs)
             
 
@@ -144,8 +146,6 @@ def BERT_compute_embeddings(samples,opt,bmodel):
     # load model + tokenizer
     model = Loader.bertModel(bmodel, opt.cuda)
 
-    # SELF-SIMILARITY OF WORDS
-    logger.info('   self-similarity and max explainable variance ')
     #compute BERT embeddings
     bert_tokens, bert_tokenization =  model.tokenize(samples)
     #if (opt.dev_params and len(bert_tokens)>17):
@@ -155,7 +155,7 @@ def BERT_compute_embeddings(samples,opt,bmodel):
     
     outfile=f'{bmodel}' if not opt.dev_params else f'{bmodel}_dev'
     saveh5file(opt.outdir,outfile,bert_encodings)
-    logger.info('   saving tokenized sentences to {0}'.format(f'{opt.outdir}/{outfile}_tokd.pkl'))
+    logger.info('     saving tokenized sentences to {0}'.format(f'{opt.outdir}/{outfile}_tokd.pkl'))
     pickle.dump(corrected_sentences, open(f'{opt.outdir}/{outfile}_tokd.pkl','wb'))
     return corrected_sentences, bert_encodings
 
@@ -225,7 +225,7 @@ def compute_or_load_embeddings(opt, samples):
 
     else:
         # load embeddings
-        logger.info('Loading embeddings...') 
+        logger.info('Loading embeddings & tokenized sentences...') 
         ''' 
         if isinstance(opt.load_embeddings_path,list):
             print(opt.load_embeddings_path)
@@ -259,8 +259,10 @@ def compute_or_load_embeddings(opt, samples):
                             all_toks[fname] = pickle.load(open(path+file,'br'))
             else:
                 fname = os.path.basename(path).split('.')[0]
-                all_embeddings[fname]= loadh5file(path) 
-                all_toks[fname] = pickle.load(open(path,'br'))
+                all_embeddings[fname]= loadh5file(path)
+                logger.info(f'Loading tokenized sentences from {os.path.splitext(path)[0]}_tokd.pkl') 
+
+                all_toks[fname] = pickle.load(open(os.path.splitext(path)[0]+'_tokd.pkl','br'))
                 
 
     return all_toks, all_embeddings

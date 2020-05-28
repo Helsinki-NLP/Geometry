@@ -30,7 +30,7 @@ class bertModel():
     def tokenize(self, sentences):
         '''OPTIONAL: if you want to have more information on what's happening, activate the logger as follows
                     # logging.basicConfig(level=logging.INFO) '''
-        logger.info('   tokenizing...')
+        logger.info('     tokenizing...')
         tokenized_sentences = []
         tokens_tensors = []
         for i in tqdm(range(len(sentences))):
@@ -68,7 +68,7 @@ class bertModel():
         return encoded_sentences
 
     def correct_bert_tokenization(self, bert_encodings, bert_sentences):
-        logger.info('   correcting for BERT subword tokenization...')
+        logger.info('     correcting for BERT subword tokenization...')
         corrected_encodings = []
         for bert_encoding, bert_sentence in tqdm(zip(bert_encodings, bert_sentences)):
             #print(bert_sentence)
@@ -176,7 +176,7 @@ class huggingfaceModel():
             - encoded_sentences[list]: list of size |batches| . Each element of the list contains a list with the encodings 
                                        of embeddings layer, encoder_layers, decoder_layers
         '''
-        logger.info('   tokenizing and computing embeddings ...')
+        logger.info('     tokenizing and computing embeddings ...')
 
         # compute by batches, because it is faster
         encoded_sentences = []
@@ -211,7 +211,7 @@ class huggingfaceModel():
 
     
     def correct_tokenization(self, tokd_sentences, encodings):
-        logger.info('   correcting for tokenization...')
+        logger.info('     correcting for tokenization...')
         corrected_encodings = []
 
         for encoding, sentence in tqdm(zip(encodings, tokd_sentences)):

@@ -5,3 +5,4 @@ pytorch-pretrained-bert==0.6.2
 sklearn
 mosestokenizer
 h5py
+matplotlib

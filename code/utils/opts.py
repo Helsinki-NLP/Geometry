@@ -14,6 +14,9 @@ def get_parser():
     parser.add_argument("--apply_bpe", action='store_true',
                         help="Does your model needs BPEd data as input?")
 
+    parser.add_argument("--bert_models",  "-bert", type=str, required=False,  nargs='+', default=["bert-base-uncased","bert-base-cased"],
+                        help="Which BERT to use for contextualized embeddings [bert-base-uncased | bert-base-cased].")
+
     parser.add_argument("--bpe_model", required=False,
                         help='path to read onmt_model')
 
@@ -28,6 +31,9 @@ def get_parser():
     
     parser.add_argument("--dev_params", action='store_true',
                         help="set params and options small enough to develop faster.")
+
+    parser.add_argument("--huggingface_models", '-hfmodels', type=str, required=False, nargs='+', default=['Helsinki-NLP/opus-mt-en-de','Helsinki-NLP/opus-mt-en-fr','Helsinki-NLP/opus-mt-en-ee','Helsinki-NLP/opus-mt-en-fi','Helsinki-NLP/opus-mt-en-cs','Helsinki-NLP/opus-mt-en-it','Helsinki-NLP/opus-mt-en-sv','Helsinki-NLP/opus-mt-en-ru','Helsinki-NLP/opus-mt-en-el'],
+                        help="name of the huggingface model(s) to use. If more than one, separate with a space")
 
     parser.add_argument("--intrasentsim_samplesize", "-intra_ss", required=False, type=int, default=500,
                         help='size of the sentence sample to be extracted for computing the intra-sentence similarity')
@@ -46,14 +52,11 @@ def get_parser():
     parser.add_argument("--onmt_model", type=str, required=False,
                         help='path to read onmt_model')
 
-    parser.add_argument("--outdir", type=str, required=False, default='../results/',
+    parser.add_argument("--outdir", type=str, required=False, default='../outputs/',
                         help='path to dir where outputs will be saved')
 
-    parser.add_argument("--huggingface_models", '-hfmodels', type=str, required=False, nargs='+', default=['Helsinki-NLP/opus-mt-en-de','Helsinki-NLP/opus-mt-en-fr','Helsinki-NLP/opus-mt-en-ee','Helsinki-NLP/opus-mt-en-fi','Helsinki-NLP/opus-mt-en-cs','Helsinki-NLP/opus-mt-en-it','Helsinki-NLP/opus-mt-en-sv','Helsinki-NLP/opus-mt-en-ru','Helsinki-NLP/opus-mt-en-el'],
-                        help="name of the huggingface model(s) to use. If more than one, separate with a space")
-
-    parser.add_argument("--bert_models",  "-bert", type=str, required=False,  nargs='+', default=["bert-base-uncased","bert-base-cased"],
-                        help="Which BERT to use for contextualized embeddings [bert-base-uncased | bert-base-cased].")
+    parser.add_argument("--plot_results", action='store_true',
+                        help="if active, will plot results after computing metrics.")
 
     parser.add_argument("--selfsim_samplesize", "-self_ss",required=False, type=int, default=2500,
                         help='size of the words sample to extract for computing the self-similarity')

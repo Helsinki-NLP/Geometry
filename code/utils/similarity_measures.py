@@ -4,6 +4,8 @@ Contains the functions to compute similarity measures as described in Ethayarajh
 '''
 
 import torch
+#import numpy as np
+from tqdm import tqdm
 from sklearn.decomposition import TruncatedSVD, PCA
 
 
@@ -33,7 +35,6 @@ def intra_similarity(sent_embs):
     compute intra-sentence similarity as described in Ethayarajh(2019)
     INPUT: 
         - sent_embs[tensor]: sentence embedding. Tensor of size [sent_len, hdim_embs]. 
-                           Relevant for transformer architectures.
     
     OUTPUT:
         - current_selfsim[tensor]: computed self-similarity for inputed word_embeddings
@@ -65,3 +66,35 @@ def max_expl_var(word_embs):
  
     return variance_explained
 
+def get_baselines(embeddings, w2s, nlayers):
+    
+    baselines_metric1 = torch.zeros((nlayers,))
+    #baselines_metric2 = torch.zeros((nlayers,)) #<- computed later for efficiency purposes
+    baselines_metric3 = torch.zeros((nlayers,))
+    '''
+    for layer in range(nlayers):
+        all_embs_list = []
+        for wid, occurrences in enumerate(w2s.w2sdict.values()):
+            for occ in occurrences:
+                sentence_id, word_id = occ
+                all_embs_list.append(embeddings[sentence_id][layer,word_id,:])
+
+        all_embs = torch.stack(all_embs_list, dim=0)
+        baselines_metric1[layer] = Sim.self_similarity(all_embs).item()
+        baselines_metric3[layer] = Sim.max_expl_var(all_embs).item() #FIXME: Is this correct formula?
+    '''
+
+    
+    all_embs = torch.cat([embeddings[i][:,w2s.s2idxdict[i],:] for i in range(len(embeddings))], dim=1)
+    for layer in range(nlayers):
+        baselines_metric1[layer] = self_similarity(all_embs[layer,:,:]).item() # not open to interpretation, given in the paper
+        baselines_metric3[layer] = max_expl_var(all_embs[layer,:,:]).item() # INTERPRETATION 1: baseline_metric3
+        '''
+        temp = 0
+        for i in range(len(embeddings)):        
+            sent_embs = embeddings[i]#[:,w2s.s2idxdict[i],:]
+            temp += intra_similarity( sent_embs[layer,:,:] ) 
+        baselines_metric2[layer] = temp/len(embeddings) # INTERPRETATION 1: baseline_metric2
+        '''
+
+    return baselines_metric1, baselines_metric3

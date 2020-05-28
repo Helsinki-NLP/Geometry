@@ -22,22 +22,17 @@ from utils import opts
 from utils.logger import logger
 from utils import embeddings_manager as Emb
 from utils import similarity_measures as Sim
+from utils import plotting as Plt
 
 def  main(opts):
     
     logger.info('Loading data samples from '+str(opt.data_path))
-    STS_path = opt.data_path
-    with open(STS_path, 'r') as f:
+    with open(opt.data_path, 'r') as f:
         samples = f.readlines()
     
     samples = [sent.strip() for sent in samples]
     if opt.dev_params:
         samples=samples[:20]
-    #sents = []
-    #for sent in samples:
-    #    sent = sent.strip()
-    #    sent = re.findall(r'[\w]+|\.|,|\?|\!|;|:|\'|\(|\)|/',sent) # tokenization is a model_loader class attribute. Need to undo this there.
-    #    sents.append(sent)
     
     all_toks, all_embeddings = Emb.compute_or_load_embeddings(opt, samples)
 
@@ -48,51 +43,19 @@ def  main(opts):
     logger.info('Computing metrics')
     for tokdsents, (modname, embs) in zip(* (all_toks.values(), all_embeddings.items()) ):
         #w2s=make_or_load_w2s(opt,tokdsents)
-        logger.info(' [*] MODEL: {0} '.format(modname))
+        logger.info('[*] MODEL: {0} '.format(modname))
         w2s=make_indexer(opt,tokdsents,modname)
-        metrics[modname] = compute_similarity_metrics(w2s,ssample,modname, embs)
-   
+        metrics[modname] = compute_similarity_metrics(w2s, ssample, modname, embs)
+
     logger.info('Saving metrics')
     dump_similarity_metrics(opt, metrics)
-
-
-    '''
-
-    #load & compute embeddings from MT model
-    logger.info('Running sentences containing sampled words through the mt-encoder')
-    all_mt_embedds = get_encodings_from_onmt_model(w2s.new_sents,opt) # get MT-embedds from set of sentences with the words needed
-    bpedsents = all_mt_embedds.pop('sentences')
-
-    # merge embeddings from splitted words (bpe)
-    if opt.bpe_model:
-        all_mt_embedds, w2s, _ = merge_bped_embedds(bpedsents, all_mt_embedds, w2s)
-
-    # get embeddings of the word positions
-    print('Extracting word embeddings')
-    mt_embedds = extract_embeddings(w2s,all_mt_embedds)
-
-    # SELF-SIMILARITY
-    self_similarities = {}
-    for word, embedds in mt_embedds.items():
-        if embedds['layer0']['normalized'].shape[0] > 1:
-            for layer,embs_type in embedds.items():
-                #print('entered using:', word,layer)
-                self_similarities.setdefault(word,{}).setdefault(layer,{})
-                self_similarities[word][layer] = self_similarity(word, embs_type)
-
-    print('Computing self-similarities...')
-    w2s_4_selfsim = {w:pos for w,pos in w2s.items() if len(pos)>1}
-    self_similarities = {}
-    numlayers = len(mt_embedds[list(w2s_4_selfsim.keys())[0]])
-    tensor_selfsimilarities = torch.zeros((len(w2s_4_selfsim),numlayers,2)) # [word_index, num_layers, |{normalized,unnormalized}| ]
-
-    for wordid, word in enumerate(w2s_4_selfsim):
-        print('computing self similarity for ', word)
-        for layerid, (layer,embs_type) in enumerate(mt_embedds[word].items()):
-            tensor_selfsimilarities[wordid,layerid,:] = self_similarity(word, embs_type)
-
-
-    '''
+    
+    if opt.plot_results:
+        Plt.makeplot(metrics)
+    else:
+        logger('finishing ... to make a plot like ours call `utils/ploting.py path/to/savedMetrics.pkl` ')
+        logger(' you can also use option --plot_results')
+    
 
 def make_or_load_w2s(opt, sents):
     ''' 
@@ -149,8 +112,8 @@ def make_indexer(opt,sents,modname):
     w2s = Emb.w2s(sents,bow5x)
     fbasename=os.path.basename(opt.data_path).strip('.txt')
     fname=f'w2s_{fbasename}_{modname}' 
-    logger.info(f'   Dumping word2sentence indexer at location: ../embeddings/{fname}.pkl')
-    pickle.dump(w2s,open(f'../embeddings/{fname}.pkl','wb'))
+    logger.info(f'   Dumping word2sentence indexer at location: ../outputs/{fname}.pkl')
+    pickle.dump(w2s,open(f'../outputs/{fname}.pkl','wb'))
 
     return w2s
 
@@ -179,23 +142,12 @@ def compute_similarity_metrics(w2s,ssample,modname, embeddings):
     N_LAYERS, _ , HDIM = embeddings[0].shape
 
     # BASELINES [FOR ANISOTROPY CORRECTION]
-    baselines_metric1 = np.zeros((N_LAYERS,))
-    baselines_metric3 = np.zeros((N_LAYERS,))
-    for layer in range(N_LAYERS):
-        all_embs_list = []
-        for wid, occurrences in enumerate(w2s.w2sdict.values()):
-            sentence_id = occurrence[0]
-            word_id = occurrence[1]
-            all_embs_list.append(embeddings[sentence_id][layer,word_id,:])
-
-        all_embs = torch.stack(all_embs_list, dim=0)
-        baselines_metric1[layer] = Sim.self_similarity(all_embs).item()
-        baselines_metric3[layer] = Sim.max_expl_var(all_embs).item() #FIXME: Is this correct formula?
+    b1, b3 = Sim.get_baselines(embeddings, w2s, N_LAYERS)
 
     # SELF-SIMILARITY & MAXIMUM EXPLAINABLE VARIANCE
-    selfsim = np.zeros((len(w2s.w2sdict), N_LAYERS ))
-    mev = np.zeros((len(w2s.w2sdict), N_LAYERS ))
-    for wid, occurrences in enumerate(w2s.w2sdict.values()):
+    selfsim = torch.zeros((len(w2s.w2sdict), N_LAYERS ))
+    mev = torch.zeros((len(w2s.w2sdict), N_LAYERS ))
+    for wid, occurrences in tqdm(enumerate(w2s.w2sdict.values())):
         for layer in range(N_LAYERS):
             embs4thisword = torch.zeros((len(occurrences), HDIM))
             for i, idx_tuple in enumerate(occurrences):
@@ -203,29 +155,40 @@ def compute_similarity_metrics(w2s,ssample,modname, embeddings):
                 word_id = idx_tuple[1]
                 embs4thisword[i,:] = embeddings[sentence_id][layer, word_id,:]
 
-            selfsim[wid, layer] = Sim.self_similarity(embs4thisword).item() - baselines_metric1[layer]
-            mev[wid, layer] = Sim.max_expl_var(embs4thisword).item() - baselines_metric3[layer]
-
+            selfsim[wid, layer] = Sim.self_similarity(embs4thisword).item() #- b1[layer]
+            mev[wid, layer] = Sim.max_expl_var(embs4thisword).item() #- b3[layer]
+    
 
     # INTRA-SENTENCE SIMILARITY
     logger.info('   intra-sentence similarity ')
-    intrasentsim = np.zeros((len(ssample[0]), N_LAYERS))
+    insentsim = torch.zeros((len(ssample[0]), N_LAYERS))
     for layer in range(N_LAYERS):
         for sid, sentence in zip(*ssample):
-            intrasentsim[sid,layer] = Sim.intra_similarity(embeddings[sid][layer])
+            insentsim[sid,layer] = Sim.intra_similarity(embeddings[sid][layer]) #- b2[layer]
+    
+    b2 = insentsim.mean(dim=0)
+    b3bis = mev.mean(dim=0)# INTERPRETATION 2: baseline_metric3
 
-    return selfsim, intrasentsim, mev
+
+    metricsdict = {'selfsim':selfsim,
+                   'selfsim_isotropic': selfsim - b1,
+                   'intrasentsim': insentsim,
+                   'intrasentsim_isotropic': insentsim - b2,
+                   'mev': mev,
+                   'mev_isotropic_V1': mev - b3,
+                   'mev_isotropic_V2': mev - b3bis,
+                    }
+    return metricsdict
 
 def dump_similarity_metrics(opt, metrics):
     # DUMP PICKLES
-    if opt.save_results:
-        logger.info('   dumping similarity measures to '+str(opt.outdir) )
-        
+    if opt.save_results:        
         outfilename=str(opt.outdir)+'similarity.pkl' if not opt.dev_params else str(opt.outdir)+'similarity_dev.pkl'
+        logger.info(f'   dumping similarity measures to {outfilename}')
         pickle.dump(metrics, open(outfilename, 'bw'))
 
     else:
-        logger.info('   use --save_results options to save results')
+        logger.info('   use --save_results options to save computed metrics before averaging')
 
     
  
@@ -234,17 +197,16 @@ def update_opts_to_devmode(opts):
     logger.info('dev mode activated... overriding parameters:')
     print('                                --debug_mode = True,')
     print('                                --use_samples = True,')
-    print(f'                                --data_path = {opt.data_path.strip(".txt")}_dev.txt,')
     print('                                --intrasentsim_samplesize = 10,')
     print('                                --isotropycorrection_samplesize = 25')
     print('                                --selfsim_samplesize = 1')
     #print('                          huggingface_models = bert-base-uncased')
     opts.debug_mode = True
     opts.use_samples=False
-    opt.data_path=f'..{opt.data_path.strip(".txt")}_dev.txt'
     opts.intrasentsim_samplesize = 10
     opts.isotropycorrection_samplesize = 25
     opts.selfsim_samplesize = 3
+    opts.save_results = True
     #opts.huggingface_models = 'bert-base-uncased'
 
 

@@ -54,7 +54,7 @@ def  main(opts):
     dump_similarity_metrics(opt, metrics)
     
     if opt.plot_results:
-        Plt.makeplot(metrics)
+        Plt.makeplot(metrics,opt.outdir)
     else:
         logger.info('finishing ... to make a plot like ours call `utils/ploting.py path/to/savedMetrics.pkl` ')
         logger.info(' you can also use option --plot_results')

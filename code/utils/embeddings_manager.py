@@ -126,12 +126,10 @@ def loadh5file(load_path):
     logger.info('   loading from {0}'.format(load_path))
     h5f = h5py.File(load_path, 'r')
     setlen = len(h5f)
-    loaded_embs = [torch.FloatTensor(h5f.get(str(i))[()]).detach() for i in range(setlen)]    
+    loaded_embs = [torch.FloatTensor(h5f.get(str(i))[()]) for i in range(setlen)]    
     h5f.close()
     # correct for sents of 1 token
-    for emb in loaded_embs:
-        if len(emb.shape) == 2: 
-            emb.unsqueeze_(1)
+    loaded_embs = [ emb.unsqueeze(1).detach() if len(emb.shape) == 2 else emb.detach() for emb in loaded_embs ] 
     return loaded_embs
 
 def saveh5file(outdir,fname,embeddings):

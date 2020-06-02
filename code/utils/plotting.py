@@ -98,7 +98,7 @@ if __name__ == '__main__':
     parser.add_argument("--input", type=str, required=True,  nargs='+',
                         help="Path to dictionary with metrics to make plot. This file is outputed from compare_contextEmbeddings.py")
 
-    parser.add_argument("--output", type=str, required=False,  nargs='+', default='../outputs/'
+    parser.add_argument("--output", type=str, required=False,  nargs='+', default='../outputs/',
                         help="Path to saving plots directory")
     
     opt = parser.parse_args()

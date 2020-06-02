@@ -32,7 +32,10 @@ def  main(opts):
     
     samples = [sent.strip() for sent in samples]
     if opt.dev_params:
+        bad_sent = samples[35619]
         samples=samples[:20]
+        samples.append(bad_sent)
+
     
     all_toks, all_embeddings = Emb.compute_or_load_embeddings(opt, samples)
 
@@ -53,8 +56,8 @@ def  main(opts):
     if opt.plot_results:
         Plt.makeplot(metrics)
     else:
-        logger('finishing ... to make a plot like ours call `utils/ploting.py path/to/savedMetrics.pkl` ')
-        logger(' you can also use option --plot_results')
+        logger.info('finishing ... to make a plot like ours call `utils/ploting.py path/to/savedMetrics.pkl` ')
+        logger.info(' you can also use option --plot_results')
     
 
 def make_or_load_w2s(opt, sents):
@@ -138,13 +141,14 @@ def sample_sents(opt,sents):
 
 
 def compute_similarity_metrics(w2s,ssample,modname, embeddings):
-    logger.info('   self-similarity and max explainable variance ')
     N_LAYERS, _ , HDIM = embeddings[0].shape
 
     # BASELINES [FOR ANISOTROPY CORRECTION]
+    logger.info('   computing baselines for anisotropy correction ')
     b1, b3 = Sim.get_baselines(embeddings, w2s, N_LAYERS)
 
     # SELF-SIMILARITY & MAXIMUM EXPLAINABLE VARIANCE
+    logger.info('   self-similarity and max explainable variance ')
     selfsim = torch.zeros((len(w2s.w2sdict), N_LAYERS ))
     mev = torch.zeros((len(w2s.w2sdict), N_LAYERS ))
     for wid, occurrences in tqdm(enumerate(w2s.w2sdict.values())):
@@ -183,7 +187,9 @@ def compute_similarity_metrics(w2s,ssample,modname, embeddings):
 def dump_similarity_metrics(opt, metrics):
     # DUMP PICKLES
     if opt.save_results:        
-        outfilename=str(opt.outdir)+'similarity.pkl' if not opt.dev_params else str(opt.outdir)+'similarity_dev.pkl'
+
+        suffix='similarity.pkl' if not opt.dev_params else 'similarity_dev.pkl'
+        outfilename=prefix = str(opt.outdir)+'/'+'_'.join( metrics.keys() ) + suffix
         logger.info(f'   dumping similarity measures to {outfilename}')
         pickle.dump(metrics, open(outfilename, 'bw'))
 

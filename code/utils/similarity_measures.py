@@ -83,9 +83,11 @@ def get_baselines(embeddings, w2s, nlayers):
         baselines_metric1[layer] = Sim.self_similarity(all_embs).item()
         baselines_metric3[layer] = Sim.max_expl_var(all_embs).item() #FIXME: Is this correct formula?
     '''
-
-    
-    all_embs = torch.cat([embeddings[i][:,w2s.s2idxdict[i],:] for i in range(len(embeddings))], dim=1)
+    all_embs = []
+    for i in range(len(embeddings)):
+        all_embs.append(embeddings[i][:,w2s.s2idxdict[i],:])
+    all_embs = torch.cat(all_embs, dim=1)
+    #all_embs = torch.cat([embeddings[i][:,w2s.s2idxdict[i],:] for i in range(len(embeddings))], dim=1)
     for layer in range(nlayers):
         baselines_metric1[layer] = self_similarity(all_embs[layer,:,:]).item() # not open to interpretation, given in the paper
         baselines_metric3[layer] = max_expl_var(all_embs[layer,:,:]).item() # INTERPRETATION 1: baseline_metric3

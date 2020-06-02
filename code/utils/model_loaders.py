@@ -201,11 +201,29 @@ class huggingfaceModel():
             tokdsent = self.tokenizer.prepare_translation_batch(src_texts=[sent]) 
             tokdsent = {k:v.to(self.device) for k,v in tokdsent.items()}
             model_outputs = self.model.forward(**tokdsent) 
-            #dec_out=model_outputs[:3] # x, all_hidden_states(output_hidden_states=True), all_self_attns(output_attentions=True)
             #enc_out=model_outputs[3:] # x, encoder_states(output_hidden_states=True), all_attentions(output_attentions=True)
-            encoded_sentences.append( [x.detach().to('cpu') for x in model_outputs[4]+model_outputs[1]]  )
+            #dec_out=model_outputs[:3] # x, all_hidden_states(output_hidden_states=True), all_self_attns(output_attentions=True)
+            encoded_sentences.append( [x.detach().to('cpu').squeeze() for x in model_outputs[4]+model_outputs[1]]  )
 
         tokd_sentences = self.tokenize(sentences)
+        
+        
+        bad_sentences = 0
+        idx_tokeep = []
+        badidx=[]
+        for i in range(len(sentences)):
+            if (len(tokd_sentences[i]) +1 == encoded_sentences[i][0].size(0)):
+                idx_tokeep.append(i)
+            else:
+                badidx.append(i)
+
+        with open('../outputs/wrongly_tokd_sentences.txt','w') as f:
+            for i in badidx:
+                f.writelines(' '.join(tokd_sentences[i])+' \n')
+
+        tokd_sentences = [tokd_sentences[i] for i in idx_tokeep]
+        encoded_sentences = [encoded_sentences[i] for i in idx_tokeep]
+        
         return tokd_sentences, encoded_sentences
 
 
@@ -237,6 +255,10 @@ class huggingfaceModel():
                 # Add the last token too:
                 current_layer.append(prev_token / accum) # Average pooling
 
+                # Get rid of the <eos> embedding
+                #current_layer_tensor = current_layer_tensor[:,:-1,:]
+
+
                 current_layer_tensor = torch.stack(current_layer, dim=0)
 
                 all_layers.append(current_layer_tensor.detach().squeeze())
@@ -244,9 +266,10 @@ class huggingfaceModel():
             corrected_encodings.append(torch.stack(all_layers)) # [n_sents, N_LAYERS, sent_length, h_hidden]
         
         corrected_sentences = []
+        
         for sent in tokd_sentences:
             corrected_sentences.append(''.join(sent).split('▁')[1:] )
-
+        
         return corrected_sentences, corrected_encodings
 
 

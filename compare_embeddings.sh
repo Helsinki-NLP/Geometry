@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=geom
 #SBATCH --account=project_2001970
-#SBATCH --time=72:00:00
-#SBATCH --mem-per-cpu=64G
+#SBATCH --time=01:00:00
+#SBATCH --mem-per-cpu=38G
 #SBATCH --partition=small
 #SBATCH -o out_%j
 #SBATCH -e err_%j

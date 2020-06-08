@@ -111,19 +111,18 @@ def get_baselines(embeddings, w2s, nlayers):
     patience = 10 
 
     for layer in tqdm(range(nlayers)):
+        logger.info(f'     LAYER {layer}')
         # init params for sampling on this layer
         means = []  
         gen = sample_gen(nembs,[])
         patience_count = 0
         for i in np.arange(nembs/bsz-1): 
             batch = [next(gen) for j in range(bsz)]
-            
             means.append( self_similarity(all_embs[layer,batch,:]).item() )
             # the variance of the means is the sample variance (see "The Method of Batch Means")
-            sample_var = 1 if len(mean)==1 else np.var(means, ddof=1)
-            diff = abs(estimator - prev_estimator)
-            prev_estimator = estimator
-            logger.info(f' mean estimation: {round(means[-1],5)}, var: {sample_var}, patience counter: {patience - patience_count}')
+            sample_var = np.nan if len(means)==1 else np.var(means, ddof=1)
+
+            logger.info(f'      mean estim.: {round(means[-1],5)}, var: {sample_var}, patience counter: {patience - patience_count}')
             # break if is has converged
             if sample_var<trsh:
                 patience_count += 1 # allows to accum at least 10 means

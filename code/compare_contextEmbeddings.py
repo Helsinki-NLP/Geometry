@@ -148,7 +148,7 @@ def compute_similarity_metrics(w2s,ssample,modname, embeddings):
     b1, b3 = Sim.get_baselines(embeddings, w2s, N_LAYERS)
 
     # SELF-SIMILARITY & MAXIMUM EXPLAINABLE VARIANCE
-    logger.info('   self-similarity and max explainable variance ')
+    logger.info('   computing self-similarity and max explainable variance ')
     selfsim = torch.zeros((len(w2s.w2sdict), N_LAYERS ))
     mev = torch.zeros((len(w2s.w2sdict), N_LAYERS ))
     for wid, occurrences in tqdm(enumerate(w2s.w2sdict.values())):
@@ -160,11 +160,11 @@ def compute_similarity_metrics(w2s,ssample,modname, embeddings):
                 embs4thisword[i,:] = embeddings[sentence_id][layer, word_id,:]
 
             selfsim[wid, layer] = Sim.self_similarity(embs4thisword).item() #- b1[layer]
-            mev[wid, layer] = Sim.max_expl_var(embs4thisword).item() #- b3[layer]
+            mev[wid, layer] = Sim.max_expl_var(embs4thisword) #- b3[layer]
     
 
     # INTRA-SENTENCE SIMILARITY
-    logger.info('   intra-sentence similarity ')
+    logger.info('   computing intra-sentence similarity ')
     insentsim = torch.zeros((len(ssample[0]), N_LAYERS))
     for layer in range(N_LAYERS):
         for sid, sentence in zip(*ssample):

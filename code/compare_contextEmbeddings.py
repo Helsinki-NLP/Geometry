@@ -32,23 +32,18 @@ def  main(opts):
     
     samples = [sent.strip() for sent in samples]
     if opt.dev_params:
-        bad_sent = samples[35619]
         samples=samples[:20]
-        samples.append(bad_sent)
 
     
     all_toks, all_embeddings = Emb.compute_or_load_embeddings(opt, samples)
 
-    
-    ssample = sample_sents(opt,samples)
-    
     metrics={}
     logger.info('Computing metrics')
     for tokdsents, (modname, embs) in zip(* (all_toks.values(), all_embeddings.items()) ):
         #w2s=make_or_load_w2s(opt,tokdsents)
         logger.info('[*] MODEL: {0} '.format(modname))
         w2s=make_indexer(opt,tokdsents,modname)
-        metrics[modname] = compute_similarity_metrics(w2s, ssample, modname, embs)
+        metrics[modname] = compute_similarity_metrics(w2s, modname, embs)
 
     logger.info('Saving metrics')
     dump_similarity_metrics(opt, metrics)
@@ -121,27 +116,9 @@ def make_indexer(opt,sents,modname):
 
     return w2s
 
-def sample_sents(opt,sents):
-    '''
-    sample sentences if required in opt
-    INPUT:
-        - opt 
-        - sents
-    OUTPUT:
-        - ssample[tuple]:  (sampled indexes, sampled sentences)
-    '''
-    if opt.use_samples:
-        logger.info("Sampling {0} sentences to compute intra-sentence similarity ... ".format(opt.intrasentsim_samplesize))
-        # sample sentences for intra sent similarity
-        ssample_idx = [random.randint(0,len(sents)-1) for i in range(opt.intrasentsim_samplesize)]
-        ssample = [sents[idx] for idx in ssample_idx]
-    else:
-        ssample_idx = [i for i in range(len(sents))]
-        ssample = sents
-    return (ssample_idx, ssample)
 
 
-def compute_similarity_metrics(w2s,ssample,modname, embeddings):
+def compute_similarity_metrics(w2s,modname, embeddings):
     N_LAYERS, _ , HDIM = embeddings[0].shape
 
     # BASELINES [FOR ANISOTROPY CORRECTION]
@@ -162,15 +139,16 @@ def compute_similarity_metrics(w2s,ssample,modname, embeddings):
 
             selfsim[wid, layer] = Sim.self_similarity(embs4thisword).item() #- b1[layer]
             mev[wid, layer] = Sim.max_expl_var(embs4thisword) #- b3[layer]
-    
 
     # INTRA-SENTENCE SIMILARITY
     logger.info('   computing intra-sentence similarity ')
-    insentsim = torch.zeros((len(ssample[0]), N_LAYERS))
-    for layer in range(N_LAYERS):
-        for sid, sentence in zip(*ssample):
-            insentsim[sid,layer] = Sim.intra_similarity(embeddings[sid][layer]) #- b2[layer]
-    
+    insentsim = torch.zeros((len(embeddings), N_LAYERS))
+    for layer in tqdm(range(N_LAYERS)):
+        logger.info(f'        layer: {layer}')
+        for sid in range(len(embeddings)): 
+            insentsim[sid,layer] = Sim.intra_similarity(embeddings[sid][layer,:,:]) #- b2[layer]
+    logger.info('    intra sentence similarity finished')
+
     b2 = insentsim.mean(dim=0)
     b3bis = mev.mean(dim=0)# INTERPRETATION 2: baseline_metric3
 

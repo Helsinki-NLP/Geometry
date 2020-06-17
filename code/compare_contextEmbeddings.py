@@ -94,9 +94,10 @@ def make_indexer(opt,sents,modname):
         if sym in bow5x:
             _ = bow5x.pop(bow5x.index(sym))
 
-    logger.info('   Selecting words that occured less than 1001 times') # Kawin did this, i think
-    bow1k= set([key for key,count in allwords.items() if count <= 1000])
-    bow5x = set(bow5x).intersection(bow1k)
+    #logger.info('   Selecting words that occured less than 1001 times') # Kawin did this, i think
+    #bow1k= set([key for key,count in allwords.items() if count <= 1000])
+    #bow5x = set(bow5x).intersection(bow1k)
+    
     '''
     # sample words for self-similarity
     logger.info('Generating w2s dictionary')

@@ -133,7 +133,7 @@ def get_baselines(embeddings, w2s, nlayers):
         # the mean of the means, once it stops varying too much (see "The Method of Batch Means")
         baselines_metric1[layer] = np.mean(means) # not open to interpretation, given in the paper
         #baselines_metric1[layer] = self_similarity(all_embs[layer,:,:]).item() # not open to interpretation, given in the paper
-        baselines_metric3[layer] = max_expl_var(all_embs[layer,:,:]).item() # INTERPRETATION 1: baseline_metric3
+        baselines_metric3[layer] = max_expl_var(all_embs[layer,:,:]) # INTERPRETATION 1: baseline_metric3
         '''
         temp = 0
         for i in range(len(embeddings)):        

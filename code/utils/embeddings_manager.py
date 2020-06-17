@@ -7,7 +7,7 @@ import os
 from tqdm import tqdm
 from copy import deepcopy
 import torch
-
+import random
 
 from utils.logger import logger
 from utils import model_loaders as Loader
@@ -38,9 +38,14 @@ class w2s:
                 if word in wsample:
                     self.w2sdict[word].append((i,j))
                     self.s2idxdict[i].append(j)
-                    #if i not in new_sentences:
-                    #    new_sentences.append(i)
-        #self.idx2newsents = set(new_sentences)
+         
+        # for very frequent words (e.g., stopwords), there are too many pairwise comparisons
+        # so for faster estimation, take a random sample of no more than 1000 pairs     
+        logger.info('   Selecting 1000 occurences from words that occured more times.') # Kawin did this, i think
+        for word, occ in self.w2sdict.items():
+            if len(occ) > 1000:
+                index_pairs = random.sample(occ, 1000)
+                self.w2sdict[word] = index_pairs
 
     def update_indexes(self,sents):
         '''

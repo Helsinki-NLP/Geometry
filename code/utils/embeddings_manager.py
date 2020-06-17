@@ -103,7 +103,7 @@ def extract_embeddings(w2s, all_mt_embedds):
 
 def average_selfsim_per_layer(w2s,embeddings):
     avg_similarities = {}
-    to_pickle = numpy.zeros((12, 1))
+    to_pickle = numpy.zeros((N_BERT_LAYERS, 1))
     for layer in range(N_BERT_LAYERS):
         encodings = []
         for word in w2s.keys():

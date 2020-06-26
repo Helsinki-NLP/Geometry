@@ -219,8 +219,9 @@ def compute_or_load_embeddings(opt, samples):
         if not (opt.huggingface_models[0]=='None'):
             logger.info('HUGGINGFACE models:')
             for i, hfmodel in enumerate(opt.huggingface_models):
-                logger.info(' [{0}] {1} embeddings: computing & saving embeddings'.format(i,hfmodel))
-                all_toks[hfmodel], all_embeddings[hfmodel] = huggingface_compute_embeddings(deepcopy(samples),opt,hfmodel)
+
+                logger.info(' [{0}] {1} embeddings: computing & saving embeddings'.format(i,f'Helsinki-NLP/opus-mt-{hfmodel}'))
+                all_toks[hfmodel], all_embeddings[hfmodel] = huggingface_compute_embeddings(deepcopy(samples),opt,f'Helsinki-NLP/opus-mt-{hfmodel}')
         
     else:
         # load embeddings

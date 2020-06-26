@@ -9,6 +9,7 @@ cd Geometry
 We strongly recommend to make the setup in a virtual environment. 
 This is done by:
 ```
+#export PYTHONUSERBASE=/projappl/project_2001970
 python3 -m pip install --user --upgrade pip
 python3 -m pip install --user virtualenv
 python3 -m venv env

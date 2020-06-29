@@ -104,7 +104,7 @@ def get_baselines(embeddings, w2s, nlayers):
     
     # hyperparams for estimator computation
     nembs=all_embs.shape[1]
-    bsz=round(nembs*0.001) # bsz = 0.1% of the data
+    bsz=max(2,round(nembs*0.001)) # bsz = 0.1% of the data
     n=(bsz**2-bsz)/2       # num of elements from which we average for computing the cosine-similarity on each batch
 
     trsh = 0.001  # stopping treshhold 

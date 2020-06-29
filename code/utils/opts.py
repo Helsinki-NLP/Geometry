@@ -15,7 +15,7 @@ def get_parser():
                         help="Does your model needs BPEd data as input?")
 
     parser.add_argument("--bert_models",  "-bert", type=str, required=False,  nargs='+', default=["bert-base-uncased","bert-base-cased"],
-                        help="Which BERT to use for contextualized embeddings [bert-base-uncased | bert-base-cased].")
+                        help="Which BERT to use for contextualized embeddings [bert-base-uncased | bert-base-cased | bert-base-multilingual-uncased | bert-base-multilingual-cased].")
 
     parser.add_argument("--bpe_model", required=False,
                         help='path to read onmt_model')
@@ -32,9 +32,12 @@ def get_parser():
     parser.add_argument("--dev_params", action='store_true',
                         help="set params and options small enough to develop faster.")
 
-    parser.add_argument("--huggingface_models", '-hfmodels', type=str, required=False, nargs='+', default=['Helsinki-NLP/opus-mt-en-de','Helsinki-NLP/opus-mt-en-fr','Helsinki-NLP/opus-mt-en-ee','Helsinki-NLP/opus-mt-en-fi','Helsinki-NLP/opus-mt-en-cs','Helsinki-NLP/opus-mt-en-it','Helsinki-NLP/opus-mt-en-sv','Helsinki-NLP/opus-mt-en-ru','Helsinki-NLP/opus-mt-en-el'],
-                        help="name of the huggingface model(s) to use. If more than one, separate with a space")
+    parser.add_argument("--huggingface_models", '-hfmodels', type=str, required=False, nargs='+', default=['en-af','en-bg','en-ca','en-cs','en-da','en-de','en-el','et','en-fi','en-fr','en-gl','en-hu','en-is','en-it','en-jap','en-nl','en-ro','en-sk','en-sv','en-uk','en-ru'],
+                        help="src-tgt languages for the huggingface model(s) to use; separate with a space"\
+                              "Defaults to Helsinki-NLP/opus-mt-${src}-${tgt} ."\
+                              " See all available models on https://huggingface.co/models")
 
+   
     parser.add_argument("--intrasentsim_samplesize", "-intra_ss", required=False, type=int, default=500,
                         help='size of the sentence sample to be extracted for computing the intra-sentence similarity')
 

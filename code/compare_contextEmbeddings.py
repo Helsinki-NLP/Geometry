@@ -36,6 +36,10 @@ def  main(opts):
 
     
     all_toks, all_embeddings = Emb.compute_or_load_embeddings(opt, samples)
+    
+    if opt.only_save_embs:
+        print('Saved embeddings ... finishing job')
+        raise SystemExit 
 
     metrics={}
     logger.info('Computing metrics')
@@ -149,25 +153,24 @@ def compute_similarity_metrics(w2s,modname, embeddings):
             insentsim[sid,layer] = Sim.intra_similarity(embeddings[sid][layer,:,:]) #- b2[layer]
     logger.info('    intra sentence similarity finished')
 
-    b2 = insentsim.mean(dim=0)
-    b3bis = mev.mean(dim=0)# INTERPRETATION 2: baseline_metric3
-
+    #b2 = insentsim.mean(dim=0)
+    #b3bis = mev.mean(dim=0)# INTERPRETATION 2: baseline_metric3
 
     metricsdict = {'selfsim':selfsim,
                    'selfsim_isotropic': selfsim - b1,
                    'intrasentsim': insentsim,
-                   'intrasentsim_isotropic': insentsim - b2,
+                   'intrasentsim_isotropic': insentsim - b1,
                    'mev': mev,
-                   'mev_isotropic_V1': mev - b3,
-                   'mev_isotropic_V2': mev - b3bis,
-                    }
+                   'mev_isotropic': mev - b3,
+                   'baseline1': b1,
+                   'baseline3': b3  }
     return metricsdict
 
 def dump_similarity_metrics(opt, metrics):
     # DUMP PICKLES
     if opt.save_results:        
 
-        suffix='similarity.pkl' if not opt.dev_params else 'similarity_dev.pkl'
+        suffix='_simMetrics.pkl' if not opt.dev_params else '_simMetrics_dev.pkl'
         outfilename=prefix = str(opt.outdir)+'/'+'_'.join( metrics.keys() ) + suffix
         logger.info(f'   dumping similarity measures to {outfilename}')
         pickle.dump(metrics, open(outfilename, 'bw'))

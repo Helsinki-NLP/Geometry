@@ -32,7 +32,7 @@ def get_parser():
     parser.add_argument("--dev_params", action='store_true',
                         help="set params and options small enough to develop faster.")
 
-    parser.add_argument("--huggingface_models", '-hfmodels', type=str, required=False, nargs='+', default=['en-af','en-bg','en-ca','en-cs','en-da','en-de','en-el','et','en-fi','en-fr','en-gl','en-hu','en-is','en-it','en-jap','en-nl','en-ro','en-sk','en-sv','en-uk','en-ru'],
+    parser.add_argument("--huggingface_models", '-hfmodels', type=str, required=False, nargs='+', default=['en-af','en-bg','en-ca','en-cs','en-da','en-de','en-et','en-fi','en-fr','en-gl','en-hu','en-is','en-it','en-jap','en-nl','en-ro','en-sk','en-sv','en-uk','en-ru'],
                         help="src-tgt languages for the huggingface model(s) to use; separate with a space"\
                               "Defaults to Helsinki-NLP/opus-mt-${src}-${tgt} ."\
                               " See all available models on https://huggingface.co/models")
@@ -51,6 +51,9 @@ def get_parser():
 
     parser.add_argument("--load_w2s", type=str, required=False, 
                         help="path to the word to sentence indexer. Saved as default in ../embeddings/w2s.pkl")
+
+    parser.add_argument("--only_save_embs", action='store_true',
+                        help="if active, will exit after computing and saving the embeddings.")
 
     parser.add_argument("--onmt_model", type=str, required=False,
                         help='path to read onmt_model')

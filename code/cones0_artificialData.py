@@ -7,9 +7,10 @@ from mpl_toolkits.mplot3d import Axes3D
 import math 
 
 # sample radious and angles - points in spherical coordinates
-r = np.random.normal(10,5,1000)
-phi = np.random.uniform(0,math.pi/3,1000)
-theta = np.random.uniform(0,math.pi/4,1000)
+samplesize=100
+r = np.random.normal(10,5,samplesize)
+phi = np.random.uniform(0,math.pi/3,samplesize)
+theta = np.random.uniform(0,math.pi/4,samplesize)
 
 x=r*np.sin(theta)*np.cos(phi)
 y=r*np.sin(theta)*np.sin(phi)
@@ -17,7 +18,20 @@ z=r*np.cos(theta)
 
 fig = plt.figure()         
 ax = fig.add_subplot(111, projection='3d')
-ax.scatter(x,y,z)
+
+A=np.array([x,y,z])
+ax.scatter(A[0],A[1],A[2],color='C0',alpha=0.15)
+mean=A.mean(axis=1)
+ax.scatter(mean[0],mean[1],mean[2], color='C3',marker='X',s=100)
+var=A.var(axis=1)
+Anorm=np.array([(A[0]-mean[0])/var[0],(A[1]-mean[1])/var[1],(A[2]-mean[2])/var[2]])
+ax.scatter(Anorm[0],Anorm[1],Anorm[2],color='C2')
+
+Acentr=np.array([A[0]-mean[0],A[1]-mean[1],A[2]-mean[2]])
+ax.scatter(Acentr[0],Acentr[1],Acentr[2],color='C1')
+mean2=Acentr.mean(axis=1)
+ax.scatter(mean2[0],mean2[1],mean2[2], color='C3',marker='D',s=100)
+
 
 # sample points in a "cone"
 plt.figure()
@@ -26,8 +40,6 @@ var_2=var_1 * 10 * np.random.randn(1000)
 S = np.array([var_1,var_2]) # Sample, shape = [2,N]
 plt.scatter(var_1,var_2,color='C0'); plt.axhline(np.max(var_2)); plt.axhline(np.min(var_2))
 #plt.scatter(S[0],S[1],color='C0'); plt.axhline(np.max(var_2)); plt.axhline(np.min(var_2))
-
-
 
 
 xmax=np.where(var_2==np.max(var_2))
@@ -47,6 +59,23 @@ np.dot(Qt,sample_point1)
 # pass all points in the sample to the orthogonal basis
 S_A = np.dot(Qt,S)    
 plt.scatter(S_A[0],S_A[1],color='C3')
+
+
+
+# what if we first recenter the points? 
+plt.figure()
+plt.scatter(var_1,var_2,color='C0',alpha=0.15); plt.axhline(np.max(var_2)); plt.axhline(np.min(var_2))
+mean=np.array([var_1,var_2]).mean(axis=1)
+S = np.array([var_1-mean[0],var_2-mean[0]]) # recenter the sample
+A=np.array([A[0]-mean[0],A[1]-mean[1]])     # recenter the vectors to get ortho-basis
+plt.scatter(S[0],S[1],color='C1',alpha=0.25)
+# compute orthogonal basis
+Q,R = np.linalg.qr(A)
+Qt = Q.transpose()
+# project all samplke to new basis
+S_A = np.dot(Qt,S)    
+plt.scatter(S_A[0],S_A[1],color='C3')
+
 
 # What if the orthogonal basis were computed from point near the centroid of the distribution?
 xmean,ymean=np.mean(S,axis=1)

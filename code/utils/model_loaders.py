@@ -2,7 +2,9 @@
 Utilities for loading models - needed for embedding extraction
 '''
 
-from pytorch_pretrained_bert import BertTokenizer, BertModel, BertForMaskedLM
+#from pytorch_pretrained_bert import BertTokenizer, BertModel, BertForMaskedLM
+from transformers import BertConfig, BertTokenizer, BertModel, BertForMaskedLM
+
 from copy import deepcopy
 from tqdm import tqdm
 from typing import List
@@ -16,17 +18,19 @@ from utils.logger import logger
 class bertModel():
 
     def __init__(self, bert_type='bert-base-uncased', cuda=False):
-        self.N_LAYERS = 12
+        self.N_LAYERS = 13
         self.ENC_DIM = 768
 
         self.tokenizer = BertTokenizer.from_pretrained(bert_type)
-        self.model = BertModel.from_pretrained(bert_type)
+
+        config = BertConfig.from_pretrained(bert_type, output_hidden_states=True)
+        self.model = BertModel.from_pretrained(bert_type, config=config)
         
         device='cuda' if cuda else 'cpu'
         self.device = device      
         self.model.eval()
         self.model.to(device)
-    
+
     def tokenize(self, sentences):
         '''OPTIONAL: if you want to have more information on what's happening, activate the logger as follows
                     # logging.basicConfig(level=logging.INFO) '''
@@ -58,10 +62,10 @@ class bertModel():
         for i in tqdm(range(len(tokens_tensors))):
             # If you have a GPU, put everything on cuda
             tokens_tensors[i] = tokens_tensors[i].to(self.device)
-            
+           
             with torch.no_grad():
-                encoded_layers, _ = self.model(tokens_tensors[i])
-            
+                _, _, encoded_layers = self.model(tokens_tensors[i])
+
             encoded_layers = [i.detach().to('cpu') for i in encoded_layers]
             encoded_sentences.append(encoded_layers)
             

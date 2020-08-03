@@ -91,15 +91,9 @@ def sample_gen(n, forbid):
 def get_baselines(embeddings, w2s, nlayers):
     
     baselines_metric1 = torch.zeros((nlayers,))
-    #baselines_metric2 = torch.zeros((nlayers,)) #<- computed later for efficiency purposes
     baselines_metric3 = torch.zeros((nlayers,))
 
-    '''
-    all_embs = []
-    for i in range(len(embeddings)):
-        all_embs.append(embeddings[i][:,w2s.s2idxdict[i],:])
-    all_embs = torch.cat(all_embs, dim=1)
-    '''
+    
     all_embs = torch.cat([embeddings[i][:,w2s.s2idxdict[i],:] for i in range(len(embeddings))], dim=1)
     
     # hyperparams for estimator computation
@@ -132,14 +126,8 @@ def get_baselines(embeddings, w2s, nlayers):
                 patience_count = 0
         # the mean of the means, once it stops varying too much (see "The Method of Batch Means")
         baselines_metric1[layer] = np.mean(means) # not open to interpretation, given in the paper
-        #baselines_metric1[layer] = self_similarity(all_embs[layer,:,:]).item() # not open to interpretation, given in the paper
+        
         baselines_metric3[layer] = max_expl_var(all_embs[layer,:,:]) # INTERPRETATION 1: baseline_metric3
-        '''
-        temp = 0
-        for i in range(len(embeddings)):        
-            sent_embs = embeddings[i]#[:,w2s.s2idxdict[i],:]
-            temp += intra_similarity( sent_embs[layer,:,:] ) 
-        baselines_metric2[layer] = temp/len(embeddings) # INTERPRETATION 1: baseline_metric2
-        '''
+
 
     return baselines_metric1, baselines_metric3

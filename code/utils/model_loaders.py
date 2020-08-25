@@ -12,12 +12,15 @@ from typing import List
 import transformers 
 
 import torch
+import torch.nn as nn
+
 from utils.logger import logger
 
 
-class bertModel():
+class bertModel(nn.Module):
 
     def __init__(self, bert_type='bert-base-uncased', cuda=False):
+        super().__init__()
         self.N_LAYERS = 13
         self.ENC_DIM = 768
 
@@ -30,6 +33,10 @@ class bertModel():
         self.device = device      
         self.model.eval()
         self.model.to(device)
+
+    def forward(self, sentences):
+        tokd_tensors, tokd_sents = self.tokenize(sentences)
+        return tokd_sents, self.encode(tokd_tensors)
 
     def tokenize(self, sentences):
         '''OPTIONAL: if you want to have more information on what's happening, activate the logger as follows
@@ -116,16 +123,14 @@ class bertModel():
 def load_onmt_model():
     pass
 
-class huggingfaceModel():
-    def __init__(self, modelname='bert-base-uncased', cuda=False):
-
-        
-        
+class huggingfaceModel(nn.Module):
+    def __init__(self, modelname='Helsinki-NLP/opus-mt-en-fi', cuda=False):
+        super().__init__()        
         #configfile=transformers.AutoConfig.from_pretrained(modelname)
         #configfile=transformers.PretrainedConfig.get_config_dict(modelname)[0]
         #for key,val in config_overrider.items(): configfile[key]=val 
 
-        logger.info('     loading model')
+        logger.info('     loading model {}'.format(modelname))
         
         #self.model = transformers.AutoModelWithLMHead.from_pretrained(modelname, **config_overrider)
         config_overrider={'output_attentions':True, 'output_hidden_states':True}
@@ -145,6 +150,9 @@ class huggingfaceModel():
         self.DIM_HIDDEN = self.model.config.d_model # dimendion of the model
         self.bsz = 256 if cuda else 16
     
+    def forward(self, sentences):
+        return self.encode(sentences)
+
     def tokenize(self, sentences): 
         return [self.tokenizer.tokenize(sent) for sent in sentences] 
 

@@ -1,4 +1,7 @@
 
+'''
+USAGE: source getSTSdb.sh <path/to/moses>
+'''
 
 MOSES=$1
 

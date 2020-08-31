@@ -232,7 +232,7 @@ dummyconfig = PretrainedConfig.from_dict(dummyconfig.to_dict())
 model = BertMT_hybrid(config = dummyconfig,
     bert_type=bert_type, 
     mt_mname=mt_mname, 
-    cuda=use_cuda)
+    use_cuda=use_cuda)
 
 
 text_batch = ["I love Pixar.", "I don't care for Pixar."]

@@ -8,7 +8,6 @@ from logging import getLogger
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List
 
-import git
 import numpy as np
 import torch
 from rouge_score import rouge_scorer, scoring
@@ -85,6 +84,7 @@ class Seq2SeqDataset(Dataset):
         src_lang=None,
         tgt_lang=None,
         prefix="",
+        prepare_translation_batch_function=None,
     ):
         super().__init__()
         self.src_file = Path(data_dir).joinpath(type_path + ".source")
@@ -143,6 +143,41 @@ class Seq2SeqDataset(Dataset):
     def make_sortish_sampler(self, batch_size):
         return SortishSampler(self.src_lens, batch_size)
 
+class BertHybridDataset(Seq2SeqDataset):
+    """A dataset that calls prepare_seq2seq_batch."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.prepare_translation_batch_function = kwargs['prepare_translation_batch_function']
+
+    def __getitem__(self, index) -> Dict[str, str]:
+        index = index + 1  # linecache starts at 1
+        source_line = self.prefix + linecache.getline(str(self.src_file), index).rstrip("\n")
+        tgt_line = linecache.getline(str(self.tgt_file), index).rstrip("\n")
+        assert source_line, f"empty source line for index {index}"
+        assert tgt_line, f"empty tgt line for index {index}"
+        return {
+            "tgt_texts": tgt_line,
+            "src_texts": source_line,
+        }
+
+    def collate_fn(self, batch) -> Dict[str, torch.Tensor]:
+        batch_encoding = self.prepare_translation_batch_function(
+            [x["src_texts"] for x in batch],
+            tgt_texts=[x["tgt_texts"] for x in batch],
+            max_length=self.max_source_length,
+            max_target_length=self.max_target_length,
+        )
+        return batch_encoding.data
+'''     
+        src_texts: List[str],
+        tgt_texts: Optional[List[str]] = None,
+        max_length: Optional[int] = None,
+        pad_to_max_length: bool = True,
+        return_tensors: str = "pt",
+        truncation_strategy="only_first",
+        padding="longest",
+        '''
 
 class TranslationDataset(Seq2SeqDataset):
     """A dataset that calls prepare_seq2seq_batch."""
@@ -233,11 +268,6 @@ def flatten_list(summary_ids: List[List]):
     return [x for x in itertools.chain.from_iterable(summary_ids)]
 
 
-def save_git_info(folder_path: str) -> None:
-    """Save git information to output_dir/git_log.json"""
-    repo_infos = get_git_info()
-    save_json(repo_infos, os.path.join(folder_path, "git_log.json"))
-
 
 def save_json(content, path):
     with open(path, "w") as f:
@@ -248,15 +278,6 @@ def load_json(path):
     with open(path) as f:
         return json.load(f)
 
-
-def get_git_info():
-    repo = git.Repo(search_parent_directories=True)
-    repo_infos = {
-        "repo_id": str(repo),
-        "repo_sha": str(repo.head.object.hexsha),
-        "repo_branch": str(repo.active_branch),
-    }
-    return repo_infos
 
 
 ROUGE_KEYS = ["rouge1", "rouge2", "rougeL"]

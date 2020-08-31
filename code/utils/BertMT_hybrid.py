@@ -1,7 +1,14 @@
+import warnings
+import time
+import torch
+import numpy as np
 import transformers
 import pytorch_lightning as pl
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Dict, List, Optional, Tuple, Union, Callable, Iterable
+from collections import defaultdict
+from pathlib import Path
 from transformers import (
     AdamW, 
     BertConfig, 
@@ -12,10 +19,17 @@ from transformers import (
     PretrainedConfig
     )
 from transformers.generation_utils import GenerationMixin
-from typing import Dict, List, Optional, Tuple, Union, Callable, Iterable
-from collections import defaultdict
 from torch.utils.data import DataLoader
-from utils.hf_utils import label_smoothed_nll_loss, lmap, Seq2SeqDataset, TranslationDataset
+from utils.hf_utils import (
+    label_smoothed_nll_loss, 
+    lmap, 
+    Seq2SeqDataset, 
+    BertHybridDataset, 
+    save_json, 
+    pickle_save, 
+    flatten_list, 
+    calculate_bleu,
+)
 
 
 class BertEncoder4Hybrid(nn.Module):
@@ -51,7 +65,7 @@ class BertEncoder4Hybrid(nn.Module):
         return encoder_outputs
 
 class BertMT_hybrid(PreTrainedModel):
-    """
+    """     
     Encodes with BERT and decodes with specified MT model.
     """
     def __init__(self, 
@@ -86,7 +100,7 @@ class BertMT_hybrid(PreTrainedModel):
 
         self.bert_encdim = self.bert.bert_encdim
 
-        self.loss_fct1 = nn.CrossEntropyLoss()
+        self.loss_fct1 = nn.CrossEntropyLoss(ignore_index=self.mt_tokenizer.pad_token_id)
         self.loss_fct2 = label_smoothed_nll_loss
 
     def prepare_translation_batch(
@@ -94,14 +108,15 @@ class BertMT_hybrid(PreTrainedModel):
         src_texts: List[str],
         tgt_texts: Optional[List[str]] = None,
         max_length: Optional[int] = None,
+        max_target_length: Optional[int] = None,
         pad_to_max_length: bool = True,
         return_tensors: str = "pt",
         truncation_strategy="only_first",
         padding="longest",
     ):
         
+                
         bert_encoded_sentences = self.bert_tokenizer(src_texts, padding=True, return_tensors='pt')
-        
         mt_encoded_sentences = self.mt_tokenizer.prepare_translation_batch(src_texts=src_texts, tgt_texts=tgt_texts)
 
 
@@ -242,6 +257,11 @@ class BertTranslator(pl.LightningModule):
     """
     Wraps the BertMT_hybrid model for using it with pytorch_lightning.
     """
+
+    loss_names = ["loss"]
+    metric_names = ["bleu"]
+    val_metric = "bleu"
+
     def __init__(self, args, **kwargs):
         #config,          bert_type='bert-base-uncased',         mt_mname='Helsinki-NLP/opus-mt-en-fi',          use_cuda=False,         output_hidden_states=False,        , **kwargs):
 
@@ -253,9 +273,11 @@ class BertTranslator(pl.LightningModule):
             **kwargs
         )
         self.hparams = args
-
         self.step_count = 0
         self.metrics = defaultdict(list)
+        self.metrics_save_path = Path(self.hparams.output_dir) / "metrics.json"
+        self.hparams_save_path = Path(self.hparams.output_dir) / "hparams.pkl"
+        pickle_save(self.hparams, self.hparams_save_path)
 
         self.dataset_kwargs: dict = dict(
             data_dir=self.hparams.data_dir,
@@ -276,9 +298,9 @@ class BertTranslator(pl.LightningModule):
         }
         assert self.target_lens["train"] <= self.target_lens["val"], f"target_lens: {self.target_lens}"
         assert self.target_lens["train"] <= self.target_lens["test"], f"target_lens: {self.target_lens}"
+        self.num_workers = self.hparams.num_workers
+        self.dataset_class = BertHybridDataset
 
-        self.dataset_class = TranslationDataset
-        
     def forward(self, input_ids, **kwargs):
         return self.model(input_ids=input_ids, **kwargs)
     
@@ -321,9 +343,6 @@ class BertTranslator(pl.LightningModule):
 
     def _step(self, batch: dict) -> Tuple:
         pad_token_id = self.model.mt_tokenizer.pad_token_id
-        #source_ids, source_mask, target_ids = batch["input_ids"], batch["attention_mask"], batch["decoder_input_ids"]
-        #decoder_input_ids = target_ids[:, :-1].contiguous()  # Why this line?
-        #lm_labels = target_ids[:, 1:].clone()  # why clone?
 
         lm_labels = batch["decoder_input_ids"].clone()
         
@@ -339,7 +358,7 @@ class BertTranslator(pl.LightningModule):
 
         if self.hparams.label_smoothing == 0:
             # Same behavior as modeling_bart.py
-            loss_fct = self.loss_fct1(ignore_index=pad_token_id)
+            loss_fct = self.model.loss_fct1
             lm_logits = outputs[0]
             assert lm_logits.shape[-1] == self.model.config.vocab_size
             loss = loss_fct(lm_logits.view(-1, lm_logits.shape[-1]), lm_labels.view(-1))
@@ -349,7 +368,27 @@ class BertTranslator(pl.LightningModule):
                 lprobs, lm_labels, self.hparams.label_smoothing, ignore_index=pad_token_id
             )
         return (loss,)
-    
+
+    def _generative_step(self, batch: dict) -> dict:
+        t0 = time.time()
+        generated_ids = self.model.generate(
+            batch["input_ids"],
+            attention_mask=batch["attention_mask"],
+            MT_attention_mask=batch['MT_attention_mask'],
+            MT_input_ids=batch['MT_input_ids'],
+            token_type_ids=batch['token_type_ids'],
+            use_cache=True,
+        )
+        gen_time = (time.time() - t0) / batch["input_ids"].shape[0]
+        preds: List[str] = self.ids_to_clean_text(generated_ids)
+        target: List[str] = self.ids_to_clean_text(batch["decoder_input_ids"])
+        loss_tensors = self._step(batch)
+        base_metrics = {name: loss for name, loss in zip(self.loss_names, loss_tensors)}
+        rouge: Dict = self.calc_generative_metrics(preds, target)
+        summ_len = np.mean(lmap(len, generated_ids))
+        base_metrics.update(gen_time=gen_time, gen_len=summ_len, preds=preds, target=target, **rouge)
+        return base_metrics
+
     @property
     def bert_pad(self) -> int:
         return self.model.bert_tokenizer.pad_token_id
@@ -357,6 +396,14 @@ class BertTranslator(pl.LightningModule):
     @property
     def mt_pad(self) -> int:
         return self.model.bert_tokenizer.pad_token_id
+        
+    def save_metrics(self, latest_metrics, type_path) -> None:
+        latest_metrics = {k:v.cpu().tolist() if isinstance(v,torch.Tensor) else v for k,v in latest_metrics.items() }
+        self.metrics[type_path].append(latest_metrics)
+        save_json(self.metrics, self.metrics_save_path)
+
+    def calc_generative_metrics(self, preds, target) -> dict:
+        return calculate_bleu(preds, target)
 
     def training_step(self, batch, batch_idx) -> Dict:
         loss_tensors = self._step(batch)
@@ -365,15 +412,39 @@ class BertTranslator(pl.LightningModule):
         # tokens per batch
         logs["tpb"] = batch["input_ids"].ne(self.bert_pad).sum() + batch["decoder_input_ids"].ne(self.mt_pad).sum()
         return {"loss": loss_tensors[0], "log": logs}
-    
+
+    def validation_step(self, batch, batch_idx) -> Dict:
+        return self._generative_step(batch)
+
+    def test_step(self, batch, batch_idx):
+        return self._generative_step(batch)
+
+    def validation_epoch_end(self, outputs, prefix="val") -> Dict:
+        self.step_count += 1
+        losses = {k: torch.stack([x[k] for x in outputs]).mean() for k in self.loss_names}
+        loss = losses["loss"]
+        rouges = {k: np.array([x[k] for x in outputs]).mean() for k in self.metric_names + ["gen_time", "gen_len"]}
+        rouge_tensor: torch.FloatTensor = torch.tensor(rouges[self.val_metric]).type_as(loss)
+        rouges.update({k: v.item() for k, v in losses.items()})
+        losses.update(rouges)
+        metrics = {f"{prefix}_avg_{k}": x for k, x in losses.items()}
+        metrics["step_count"] = self.step_count
+        self.save_metrics(metrics, prefix)  # writes to self.metrics_save_path
+        preds = flatten_list([x["preds"] for x in outputs])
+        return {"log": metrics, "preds": preds, f"{prefix}_loss": loss}#, f"{prefix}_{self.val_metric}": rouge_tensor}
+
+    def test_epoch_end(self, outputs):
+        return self.validation_epoch_end(outputs, prefix="test")
+
     def get_dataset(self, type_path) -> Seq2SeqDataset:
         n_obs = self.n_obs[type_path]
         max_target_length = self.target_lens[type_path]
         dataset = self.dataset_class(
-            self.tokenizer,
+            tokenizer=self.model.bert_tokenizer ,
             type_path=type_path,
             n_obs=n_obs,
             max_target_length=max_target_length,
+            prepare_translation_batch_function=self.model.prepare_translation_batch,
             **self.dataset_kwargs,
         )
         return dataset
@@ -410,6 +481,12 @@ class BertTranslator(pl.LightningModule):
             warnings.warn("All learning rates are 0")
         self.lr_scheduler = scheduler
         return dataloader
+
+    def val_dataloader(self) -> DataLoader:
+        return self.get_dataloader("val", batch_size=self.hparams.eval_batch_size)
+
+    def test_dataloader(self) -> DataLoader:
+        return self.get_dataloader("test", batch_size=self.hparams.eval_batch_size)
 
     @staticmethod
     def add_model_specific_args(parser):
@@ -525,6 +602,7 @@ class BertTranslator(pl.LightningModule):
         parser.add_argument("--num_train_epochs", dest="max_epochs", default=3, type=int)
         parser.add_argument("--train_batch_size", default=32, type=int)
         parser.add_argument("--eval_batch_size", default=32, type=int)
+        parser.add_argument("--test_batch_size", default=32, type=int)
         
         ### ARGUMENTS FOR HYBRID
         parser.add_argument("--bert_type", type=str, default='bert-base-uncased', help="The bert model from huggingface to be used as encoder")
@@ -538,71 +616,3 @@ class BertTranslator(pl.LightningModule):
     ###########################################################
 
 
-
-
-
-if False:
-
-    def training_step(self, batch, batch_idx) -> Dict:
-        loss_tensors = self._step(batch)
-
-        logs = {name: loss for name, loss in zip(self.loss_names, loss_tensors)}
-        # tokens per batch
-        logs["tpb"] = batch["input_ids"].ne(self.pad).sum() + batch["decoder_input_ids"].ne(self.pad).sum()
-        return {"loss": loss_tensors[0], "log": logs}
-
-    def validation_step(self, batch, batch_idx) -> Dict:
-        return self._generative_step(batch)
-
-    def validation_epoch_end(self, outputs, prefix="val") -> Dict:
-        self.step_count += 1
-        losses = {k: torch.stack([x[k] for x in outputs]).mean() for k in self.loss_names}
-        loss = losses["loss"]
-        rouges = {k: np.array([x[k] for x in outputs]).mean() for k in self.metric_names + ["gen_time", "gen_len"]}
-        rouge_tensor: torch.FloatTensor = torch.tensor(rouges[self.val_metric]).type_as(loss)
-        rouges.update({k: v.item() for k, v in losses.items()})
-        losses.update(rouges)
-        metrics = {f"{prefix}_avg_{k}": x for k, x in losses.items()}
-        metrics["step_count"] = self.step_count
-        self.save_metrics(metrics, prefix)  # writes to self.metrics_save_path
-        preds = flatten_list([x["preds"] for x in outputs])
-        return {"log": metrics, "preds": preds, f"{prefix}_loss": loss, f"{prefix}_{self.val_metric}": rouge_tensor}
-
-    def save_metrics(self, latest_metrics, type_path) -> None:
-        self.metrics[type_path].append(latest_metrics)
-        save_json(self.metrics, self.metrics_save_path)
-
-    def calc_generative_metrics(self, preds, target) -> Dict:
-        return calculate_rouge(preds, target)
-
-    def _generative_step(self, batch: dict) -> dict:
-        t0 = time.time()
-        generated_ids = self.model.generate(
-            batch["input_ids"],
-            attention_mask=batch["attention_mask"],
-            use_cache=True,
-            decoder_start_token_id=self.decoder_start_token_id,
-        )
-        gen_time = (time.time() - t0) / batch["input_ids"].shape[0]
-        preds: List[str] = self.ids_to_clean_text(generated_ids)
-        target: List[str] = self.ids_to_clean_text(batch["decoder_input_ids"])
-        loss_tensors = self._step(batch)
-        base_metrics = {name: loss for name, loss in zip(self.loss_names, loss_tensors)}
-        rouge: Dict = self.calc_generative_metrics(preds, target)
-        summ_len = np.mean(lmap(len, generated_ids))
-        base_metrics.update(gen_time=gen_time, gen_len=summ_len, preds=preds, target=target, **rouge)
-        return base_metrics
-
-    def test_step(self, batch, batch_idx):
-        return self._generative_step(batch)
-
-    def test_epoch_end(self, outputs):
-        return self.validation_epoch_end(outputs, prefix="test")
-
-
-
-    def val_dataloader(self) -> DataLoader:
-        return self.get_dataloader("val", batch_size=self.hparams.eval_batch_size)
-
-    def test_dataloader(self) -> DataLoader:
-        return self.get_dataloader("test", batch_size=self.hparams.eval_batch_size)

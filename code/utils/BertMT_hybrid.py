@@ -614,5 +614,439 @@ class BertTranslator(pl.LightningModule):
         return parser
 
     ###########################################################
+    ###########################################################
+    ###########################################################
 
+
+
+class BertSimpleTranslator(pl.LightningModule):
+    """
+    Wraps the BertMT_hybrid model for using it with pytorch_lightning.
+    """
+
+    loss_names = ["loss"]
+    metric_names = ["bleu"]
+    val_metric = "bleu"
+
+    def __init__(
+        self, 
+        args, 
+        **kwargs
+        ):
+
+        super().__init__()
+        self.hparams = args
+        
+        self.model =  BertMT_hybrid(
+            config = args.config, 
+            bert_type=args.bert_type, 
+            mt_mname=args.mt_mname, 
+            output_hidden_states=args.config.output_hidden_states,
+            **kwargs
+        )
+
+        self.step_count = 0
+        self.metrics = defaultdict(list)
+        self.metrics_save_path = Path(self.hparams.output_dir) / "metrics.json"
+        self.hparams_save_path = Path(self.hparams.output_dir) / "hparams.pkl"
+        pickle_save(self.hparams, self.hparams_save_path)
+        self.dataset_class = BertHybridDataset
+        self.dataset_kwargs: dict = dict(
+            data_dir=self.hparams.data_dir,
+            max_source_length=self.hparams.max_source_length,
+            prefix=self.model.config.prefix or "",
+        )
+
+    def forward(
+        self, 
+        input_ids, 
+        **kwargs
+        ):
+
+        return self.model(input_ids=input_ids, **kwargs)
+    
+    def configure_optimizers(self):
+        optimizer = AdamW(self.model.parameters(), lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
+        self.opt = optimizer
+        return optimizer
+
+    def ids_to_clean_text(
+        self, 
+        generated_ids: List[int],
+        ):
+
+        gen_text = self.model.mt_tokenizer.batch_decode(
+            generated_ids, 
+            skip_special_tokens=True, 
+            clean_up_tokenization_spaces=True
+        )
+
+        return lmap(str.strip, gen_text)
+
+    def _step(
+        self, 
+        batch: dict,
+        ) -> Tuple:
+
+        lm_labels = batch["decoder_input_ids"].clone()
+        
+        outputs = self(
+            input_ids=batch['input_ids'], 
+            attention_mask=batch['attention_mask'], 
+            MT_input_ids=batch['MT_input_ids'],
+            MT_attention_mask=batch['MT_attention_mask'], 
+            token_type_ids=batch['token_type_ids'],
+            decoder_input_ids=batch['decoder_input_ids'], 
+            decoder_attention_mask=batch['decoder_attention_mask'],
+            use_cache=False
+        )
+
+        lm_logits = outputs[0]
+        assert lm_logits.shape[-1] == self.model.config.vocab_size
+        loss = self.model.loss_fct1(
+            lm_logits.view(-1, lm_logits.shape[-1]), 
+            lm_labels.view(-1)
+        )
+
+        return (loss,)
+
+    def _generative_step(
+        self, 
+        batch: dict,
+        ) -> dict:
+        t0 = time.time()
+        generated_ids = self.model.generate(
+            batch["input_ids"],
+            attention_mask=batch["attention_mask"],
+            MT_attention_mask=batch['MT_attention_mask'],
+            MT_input_ids=batch['MT_input_ids'],
+            token_type_ids=batch['token_type_ids'],
+            use_cache=True,
+        )
+
+        gen_time = (time.time() - t0) / batch["input_ids"].shape[0]
+        preds: List[str] = self.ids_to_clean_text(generated_ids)
+        target: List[str] = self.ids_to_clean_text(batch["decoder_input_ids"])
+        loss_tensors = self._step(batch)
+        base_metrics = {name: loss for name, loss in zip(self.loss_names, loss_tensors)}
+        bleu: Dict = calculate_bleu(preds, target)
+        summ_len = np.mean(lmap(len, generated_ids))
+        base_metrics.update(gen_time=gen_time, gen_len=summ_len, preds=preds, target=target, **bleu)
+        
+        return base_metrics
+
+    def training_step(
+        self, 
+        batch, 
+        batch_idx,
+        ) -> Dict:
+        return {"loss": self._step(batch)[0]}
+
+    def validation_step(
+        self, 
+        batch, 
+        batch_idx,
+        ) -> Dict:
+        return self._generative_step(batch)
+
+    def test_step(
+        self, 
+        batch, 
+        batch_idx,
+        ):
+        return self._generative_step(batch)
+
+    def get_dataloader(
+        self,
+        type_path: str, 
+        batch_size: int, 
+        max_target_length: int, 
+        n_obs: int, 
+        shuffle: bool = False,
+        sampler=None,
+        ) -> DataLoader:
+        
+        dataset = self.dataset_class(
+            tokenizer=self.model.bert_tokenizer ,
+            type_path=type_path,
+            n_obs=n_obs,
+            max_target_length=max_target_length,
+            prepare_translation_batch_function=self.model.prepare_translation_batch,
+            **self.dataset_kwargs,
+        )
+        
+        dataloader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            collate_fn=dataset.collate_fn,
+            shuffle=shuffle,
+            num_workers=self.hparams.num_workers,
+            sampler=sampler,
+        )
+        
+        return dataloader
+
+    def train_dataloader(self) -> DataLoader:
+        n_obs = self.hparams.n_train
+        max_target_length = self.hparams.max_target_length
+        
+        return self.get_dataloader(
+            type_path="train",
+            batch_size=self.hparams.train_batch_size, 
+            max_target_length=max_target_length, 
+            n_obs=n_obs,
+            shuffle=True
+        )
+
+    def val_dataloader(self) -> DataLoader:
+        n_obs =  self.hparams.n_val 
+        max_target_length = self.hparams.val_max_target_length
+        
+        return self.get_dataloader(
+            type_path="val",   
+            batch_size=self.hparams.eval_batch_size, 
+            max_target_length=max_target_length, 
+            n_obs=n_obs,
+            shuffle=False
+        )
+
+    def test_dataloader(self) -> DataLoader:
+        n_obs = self.hparams.n_test
+        max_target_length = self.hparams.test_max_target_length
+        
+        return self.get_dataloader(
+            type_path="test",  
+            batch_size=self.hparams.test_batch_size, 
+            max_target_length=max_target_length, 
+            n_obs=n_obs,
+            shuffle=False
+        )
+
+    def save_metrics(
+        self, 
+        latest_metrics, 
+        type_path,
+        ) -> None:
+
+        latest_metrics = {k:v.cpu().tolist() if isinstance(v,torch.Tensor) else v for k,v in latest_metrics.items() }
+        self.metrics[type_path].append(latest_metrics)
+        save_json(self.metrics, self.metrics_save_path)
+
+    def validation_epoch_end(
+        self, 
+        outputs, 
+        prefix="val",
+        ) -> Dict:
+
+        self.step_count += 1
+        losses = {k: torch.stack([x[k] for x in outputs]).mean() for k in self.loss_names}
+        loss = losses["loss"]
+        rouges = {k: np.array([x[k] for x in outputs]).mean() for k in self.metric_names + ["gen_time", "gen_len"]}
+        rouge_tensor: torch.FloatTensor = torch.tensor(rouges[self.val_metric]).type_as(loss)
+        rouges.update({k: v.item() for k, v in losses.items()})
+        losses.update(rouges)
+        metrics = {f"{prefix}_avg_{k}": x for k, x in losses.items()}
+        metrics["step_count"] = self.step_count
+        self.save_metrics(metrics, prefix)  # writes to self.metrics_save_path
+        preds = flatten_list([x["preds"] for x in outputs])
+        return {"log": metrics, "preds": preds, f"{prefix}_loss": loss, f"{prefix}_{self.val_metric}": rouge_tensor}
+
+    def test_epoch_end(
+        self, 
+        outputs
+        ) -> Dict:
+        return self.validation_epoch_end(outputs, prefix="test")
+
+    ###########################################################
+    ###########################################################
+    ###########################################################
+
+
+if False:
+
+    # huggingface functions
+    '''
+    def ids_to_clean_text(self, generated_ids: List[int]):
+        gen_text = self.model.mt_tokenizer.batch_decode(
+            generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True
+        )
+        return lmap(str.strip, gen_text)
+    '''
+    def get_lr_scheduler(self):
+        get_schedule_func = arg_to_scheduler[self.hparams.lr_scheduler]
+        scheduler = get_schedule_func(
+            self.opt, num_warmup_steps=self.hparams.warmup_steps, num_training_steps=self.total_steps
+        )
+        scheduler = {"scheduler": scheduler, "interval": "step", "frequency": 1}
+        return scheduler
+
+
+
+
+    @property
+    def total_steps(self) -> int:
+        """The number of total training steps that will be run. Used for lr scheduler purposes."""
+        num_devices = max(1, self.hparams.gpus)  
+        effective_batch_size = self.hparams.train_batch_size * self.hparams.accumulate_grad_batches * num_devices
+        dataset_size = len(self.train_loader.dataset)
+        return (dataset_size / effective_batch_size) * self.hparams.max_epochs
+
+    def setup(self, mode):
+        if mode == "fit":
+            self.train_loader = self.get_dataloader("train", self.hparams.train_batch_size, shuffle=True)
+
+
+
+
+
+    @property
+    def bert_pad(self) -> int:
+        return self.model.bert_tokenizer.pad_token_id
+
+    @property
+    def mt_pad(self) -> int:
+        return self.model.bert_tokenizer.pad_token_id
+        
+
+    def calc_generative_metrics(self, preds, target) -> dict:
+        return calculate_bleu(preds, target)
+
+
+
+
+
+
+
+
+
+
+
+
+
+    @staticmethod
+    def add_model_specific_args(parser):
+        '''
+        TAKEN FROM HUGGINGFACE
+        '''
+        ### GENERIC ARGUMENTS
+        parser.add_argument(
+            "--output_dir",
+            default="./outputs",
+            type=str,
+            required=False,
+            help="The output directory where the model predictions and checkpoints will be written.",
+        )
+
+        parser.add_argument("--max_grad_norm", dest="gradient_clip_val", default=1.0, type=float, help="Max gradient norm")
+        parser.add_argument("--do_train", action="store_true", help="Whether to run training.")
+        parser.add_argument("--do_predict", action="store_true", help="Whether to run predictions on the test set.")
+        parser.add_argument(
+            "--gradient_accumulation_steps",
+            dest="accumulate_grad_batches",
+            type=int,
+            default=1,
+            help="Number of updates steps to accumulate before performing a backward/update pass.",
+        )
+        parser.add_argument("--seed", type=int, default=42, help="random seed for initialization")
+
+        ### MODEL SPECIFIC ARGUMENTS
+        parser.add_argument(
+            "--max_source_length",
+            default=1024,
+            type=int,
+            help="The maximum total input sequence length after tokenization. Sequences longer "
+            "than this will be truncated, sequences shorter will be padded.",
+        )
+        parser.add_argument(
+            "--max_target_length",
+            default=56,
+            type=int,
+            help="The maximum total input sequence length after tokenization. Sequences longer "
+            "than this will be truncated, sequences shorter will be padded.",
+        )
+        parser.add_argument(
+            "--val_max_target_length",
+            default=142,  # these defaults are optimized for CNNDM. For xsum, see README.md.
+            type=int,
+            help="The maximum total input sequence length after tokenization. Sequences longer "
+            "than this will be truncated, sequences shorter will be padded.",
+        )
+        parser.add_argument(
+            "--test_max_target_length",
+            default=142,
+            type=int,
+            help="The maximum total input sequence length after tokenization. Sequences longer "
+            "than this will be truncated, sequences shorter will be padded.",
+        )
+        parser.add_argument(
+            "--data_dir",
+            type=str,
+            default="/scratch/project_2001970/Geometry/wmt_en_ro",
+            required=False,
+            help="The input data dir. Should contain 6 files: train.source, train.target, val.source, val.target, test.source, test.target",
+        )
+        parser.add_argument("--freeze_encoder", action="store_true")
+        parser.add_argument("--freeze_embeds", action="store_true")
+        parser.add_argument("--sortish_sampler", action="store_true", default=False)
+        parser.add_argument("--logger_name", type=str, choices=["default", "wandb", "wandb_shared"], default="default")
+        parser.add_argument("--n_train", type=int, default=-1, required=False, help="# examples. -1 means use all.")
+        parser.add_argument("--n_val", type=int, default=500, required=False, help="# examples. -1 means use all.")
+        parser.add_argument("--n_test", type=int, default=-1, required=False, help="# examples. -1 means use all.")
+
+        parser.add_argument("--label_smoothing", type=float, default=0.0, required=False)
+        #parser.add_argument("--src_lang", type=str, default="", required=False)
+        #parser.add_argument("--tgt_lang", type=str, default="", required=False)
+        parser.add_argument(
+            "--early_stopping_patience",
+            type=int,
+            default=-1,
+            required=False,
+            help="-1 means never early stop. early_stopping_patience is measured in validation checks, not epochs. So val_check_interval will effect it.",
+        )
+ 
+        ### BASE TRANSFORMER ARGUMENTS
+        parser.add_argument(
+            "--encoder_layerdrop",
+            type=float,
+            help="Encoder layer dropout probability (Optional). Goes into model.config",
+        )
+        parser.add_argument(
+            "--decoder_layerdrop",
+            type=float,
+            help="Decoder layer dropout probability (Optional). Goes into model.config",
+        )
+        parser.add_argument(
+            "--dropout", type=float, help="Dropout probability (Optional). Goes into model.config",
+        )
+        parser.add_argument(
+            "--attention_dropout", type=float, help="Attention dropout probability (Optional). Goes into model.config",
+        )
+        parser.add_argument("--learning_rate", default=5e-5, type=float, help="The initial learning rate for Adam.")
+        parser.add_argument(
+            "--lr_scheduler",
+            default="linear",
+            choices=arg_to_scheduler_choices,
+            metavar=arg_to_scheduler_metavar,
+            type=str,
+            help="Learning rate scheduler",
+        )
+        parser.add_argument("--weight_decay", default=0.0, type=float, help="Weight decay if we apply some.")
+        parser.add_argument("--adam_epsilon", default=1e-8, type=float, help="Epsilon for Adam optimizer.")
+        parser.add_argument("--warmup_steps", default=0, type=int, help="Linear warmup over warmup_steps.")
+        parser.add_argument("--num_workers", default=4, type=int, help="kwarg passed to DataLoader")
+        parser.add_argument("--num_train_epochs", dest="max_epochs", default=3, type=int)
+        parser.add_argument("--train_batch_size", default=32, type=int)
+        parser.add_argument("--eval_batch_size", default=32, type=int)
+        parser.add_argument("--test_batch_size", default=32, type=int)
+        
+        ### ARGUMENTS FOR HYBRID
+        parser.add_argument("--bert_type", type=str, default='bert-base-uncased', help="The bert model from huggingface to be used as encoder")
+        parser.add_argument("--mt_mname" , type=str, default='Helsinki-NLP/opus-mt-en-de', help="The MT model from huggingface to be used as decoder")
+        parser.add_argument("--output_attentions", action="store_true")
+        parser.add_argument("--output_hidden_states", action="store_true")
+        #parser.add_argument('--gpus', type=int, default=0, help='number of gpus to use')
+
+        return parser
+
+    ###########################################################
 

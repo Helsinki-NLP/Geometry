@@ -2,13 +2,25 @@ import argparse
 from pathlib import Path                                                
 import pytorch_lightning as pl
 import numpy as np
+import numpy as np
 import torch                                                            
-
+import time
 import transformers                                                     
+from tqdm import tqdm
+
 
 #from utils.BertMT_hybrid import BertMT_hybrid                          
 from utils.BertMT_hybrid import BertTranslator, BertSimpleTranslator
 
+
+from torch.utils.data import DataLoader
+from utils.hf_utils import (
+    lmap, 
+    save_json, 
+    pickle_save, 
+    flatten_list, 
+    calculate_bleu,
+)
 ''' U S A G E:
 cd  /projappl/project_2001970/Geometry/code
 source /projappl/project_2001970/Geometry/env/bin/activate
@@ -82,7 +94,7 @@ def load_4_aligning(
 def do_finetuning_alignment(
     model,
     model_base,
-    num_sent=50000, 
+    num_sent=200000, 
     bsz=16, 
     num_epochs=10,
     sent_path=None,
@@ -149,6 +161,7 @@ def get_checkpoint_callback(
         )
 
 
+
 def main(args):
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     dummyconfig=transformers.PretrainedConfig.from_pretrained(args.mt_mname)
@@ -160,17 +173,22 @@ def main(args):
     dummyconfig.output_attentions = args.output_attentions 
     args.config = transformers.PretrainedConfig.from_dict(dummyconfig.to_dict()) 
     
+    device='cpu'
+    if args.gpus >= 1:
+        print(f'Using {args.gpus} CUDA device(s)')
+        device='cuda'
+
     #TO DO: 1. Train a BERT model with the finetuning_alignment.py script from Cao (adapt it to have model=BERT and base_model=MTencoder)
     #       2. Modify BertTranslator s.t. if a bert model is passed, then the bert encoder starts with those parameters (Can I use `torch.nn.Module.load_state_dict`?)
     if args.do_align: 
         alignedBERT_state_dict = do_finetuning_alignment(
-            model=args.bert_type,
-            model_base=args.mt_mname,
-            num_sent=args.num_sents_align,
-            num_epochs=args.num_epochs_align,
-            outdir=args.output_dir ,
-            log_every_n_batches=args.log_every_n_align
-        )
+                model=args.bert_type,
+                model_base=args.mt_mname,
+                num_sent=args.num_sents_align,
+                num_epochs=args.num_epochs_align,
+                outdir=args.output_dir ,
+                log_every_n_batches=args.log_every_n_align
+            )
 
     model = BertSimpleTranslator(args)
     #model = BertTranslator(args) 
@@ -178,6 +196,8 @@ def main(args):
     if args.do_align:
         # initialize bert & linear projection with the aligned model
         model.model.bert.load_state_dict(alignedBERT_state_dict)
+    
+    #######################
     logger = True 
     train_params = {} 
     if args.gpus and args.gpus > 1: 
@@ -209,11 +229,12 @@ def main(args):
         trainer.resume_from_checkpoint = checkpoints[-1]
     trainer.logger.log_hyperparams(model.hparams)
 
-    # test() without a model tests using the best checkpoint automatically
+    # test() without specifying a model tests using the best checkpoint automatically
     trainer.test()
     print(f'trainer.tested_ckpt_path: {trainer.tested_ckpt_path}')
 
     return model
+
     ########
 
 if __name__ == "__main__":
@@ -222,14 +243,55 @@ if __name__ == "__main__":
     parser = BertTranslator.add_model_specific_args(parser) 
     
     parser.add_argument("--do_align", action="store_true", help="Whether to run Cao's alignment method before training.")
-    parser.add_argument("--num_sents_align", type=int, default=50000, help="Number of sentences used in Cao's alignment method.")
+    parser.add_argument("--num_sents_align", type=int, default=200000, help="Number of sentences used in Cao's alignment method.")
     parser.add_argument("--num_epochs_align", type=int, default=10, help="Number of epochs for learning Cao's alignment method.")
-    parser.add_argument("--log_every_n_align", type=int, default=100, help="Number of epochs for learning Cao's alignment method.")
+    parser.add_argument("--log_every_n_align", type=int, default=100, help="How often to report results when doing Cao's alignment method.") 
 
-    args = parser.parse_args() 
-    #args.gpus=0  
+    args = parser.parse_args()  
     print(f'train bsz: {args.train_batch_size}, eval bsz: {args.eval_batch_size}, test bsz: {args.test_batch_size}')          
-    #import ipdb
+    import ipdb
     #with ipdb.launch_ipdb_on_exception():                                             
     #    main(args)
     main(args)
+
+
+
+'''
+cd  /projappl/project_2001970/Geometry/code
+source /projappl/project_2001970/Geometry/env/bin/activate
+tgtlang=de
+export PYTHONPATH=/scratch/project_2001970/transformers:/scratch/project_2001970/transformers/examples:${PYTHONPATH}
+export DATA_DIR=/scratch/project_2001970/Geometry/en_${tgtlang}
+export MODELNAME=Helsinki-NLP/opus-mt-en-${tgtlang}
+export MAX_LEN=128
+export BS=16
+
+
+
+export outdir=/scratch/project_2001970/Geometry/BertMThybrid/testoutput/simpleTrainer_with_alignment/en-${tgtlang}
+echo -e "RUNNING ROUTINE WITH ALIGNMENT "
+echo -e "   outputs will be stored in: ${outdir} "
+mkdir -p ${outdir}
+srun --account=project_2001970 --time=05:00:00 --mem-per-cpu=40G --partition=gpu --gres=gpu:v100:1,nvme:16 python BertMT_hybrid_train.py \
+    --learning_rate=3e-5 \
+    --do_train \
+    --do_predict \
+    --do_align \
+    --val_check_interval 0.0007 \
+    --adam_eps 1e-06 \
+    --num_train_epochs 2 \
+    --data_dir $DATA_DIR \
+    --max_source_length $MAX_LEN --max_target_length $MAX_LEN --val_max_target_length $MAX_LEN --test_max_target_length $MAX_LEN \
+    --train_batch_size $BS --eval_batch_size $BS --test_batch_size $BS \
+    --warmup_steps 500 \
+    --freeze_embeds \
+    --output_dir ${outdir} \
+    --gpus 1 \
+    --bert_type 'bert-base-uncased' \
+    --mt_mname ${MODELNAME} \
+    --num_sents_align 50000 \
+    --num_epochs_align 6 \
+    --log_every_n_align 250
+
+
+'''

@@ -32,9 +32,9 @@ python BertMT_hybrid_train.py \
     --do_train \
     --do_predict \
     --do_align \
-    --val_check_interval 0.25 \
+    --val_check_interval 0.01 \
     --adam_eps 1e-06 \
-    --num_train_epochs 6 \
+    --num_train_epochs 2 \
     --data_dir $DATA_DIR \
     --max_source_length $MAX_LEN --max_target_length $MAX_LEN --val_max_target_length $MAX_LEN --test_max_target_length $MAX_LEN \
     --train_batch_size $BS --eval_batch_size $BS --test_batch_size $BS \
@@ -58,9 +58,9 @@ python BertMT_hybrid_train.py \
     --learning_rate=3e-5 \
     --do_train \
     --do_predict \
-    --val_check_interval 0.25 \
+    --val_check_interval 0.01 \
     --adam_eps 1e-06 \
-    --num_train_epochs 6 \
+    --num_train_epochs 2 \
     --data_dir $DATA_DIR \
     --max_source_length $MAX_LEN --max_target_length $MAX_LEN --val_max_target_length $MAX_LEN --test_max_target_length $MAX_LEN \
     --train_batch_size $BS --eval_batch_size $BS --test_batch_size $BS \

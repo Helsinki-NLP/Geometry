@@ -666,7 +666,21 @@ class BertSimpleTranslator(pl.LightningModule):
         return self.model(input_ids=input_ids, **kwargs)
     
     def configure_optimizers(self):
-        optimizer = AdamW(self.model.parameters(), lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
+        for param in self.model.parameters():
+            param.requires_grad = False
+        
+        for param in self.model.mt_model.model.decoder.parameters():
+            param.requires_grad = True
+ 
+        for param in self.model.bert.parameters():
+            param.requires_grad = True
+        #optimizer = AdamW(self.model.parameters(), lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
+        optimizer = AdamW(
+            filter(lambda p: p.requires_grad, self.model.parameters()),
+            lr=self.hparams.learning_rate,
+            eps=self.hparams.adam_epsilon
+            )
+        
         self.opt = optimizer
         return optimizer
 

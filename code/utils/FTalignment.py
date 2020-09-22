@@ -395,6 +395,7 @@ def align_bert_multiple(
     
     total_processed = 0
     for epoch in range(epochs):
+        print(f'\n ...starting epoch {epoch+1}/{epochs}', flush=True) 
         for i in range(0, num_sentences, batch_size):
             loss = None
             model.train()
@@ -429,7 +430,7 @@ def align_bert_multiple(
                 total_processed += len(ss_1)
             
             if (i/batch_size % log_every_n_batches == 0):
-                print(f'Sentences {i}-{min(i+batch_size, num_sentences)}/{num_sentences}, Loss: {loss}, Time: {t0-time.time()}', flush=True) 
+                print(f'Sentences {i}-{min(i+batch_size, num_sentences)}/{num_sentences}, Loss: {loss:.4f}, Time: {time.time()-t0:.1f} secs', flush=True) 
             
             loss.backward()
             trainer.step()

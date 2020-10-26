@@ -17,3 +17,4 @@ if [ $task == 'save' ];do
     sbatch ../save_embeddings.sh 
 
 fi
+

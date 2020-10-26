@@ -90,21 +90,29 @@ def sample_gen(n, forbid):
 
 def get_baselines(embeddings, w2s, nlayers):
     
-    baselines_metric1 = torch.zeros((nlayers,))
-    baselines_metric3 = torch.zeros((nlayers,))
+    baselines_metric1 = torch.zeros((13,))
+    baselines_metric3 = torch.zeros((13,))
 
+
+    if w2s['target']:
+        nsents = len(embeddings) // 2
+        all_src_embs = torch.cat([embeddings[i][:,w2s['source'].s2idxdict[i],:] for i in range(nsents)], dim=1)
+        all_tgt_embs = torch.cat([embeddings[i][:,w2s['target'].s2idxdict[i],:] for i in range(nsents,len(embeddings))], dim=1)
+        
+    else:
+        all_src_embs = torch.cat([embeddings[i][:,w2s['source'].s2idxdict[i],:] for i in range(len(embeddings))], dim=1)
     
-    all_embs = torch.cat([embeddings[i][:,w2s.s2idxdict[i],:] for i in range(len(embeddings))], dim=1)
+    
     
     # hyperparams for estimator computation
-    nembs=all_embs.shape[1]
+    nembs=all_src_embs.shape[1]
     bsz=max(2,round(nembs*0.001)) # bsz = 0.1% of the data
     n=(bsz**2-bsz)/2       # num of elements from which we average for computing the cosine-similarity on each batch
 
     trsh = 0.001  # stopping treshhold 
     patience = 10 
 
-    for layer in tqdm(range(nlayers)):
+    for layer in range(nlayers):
         logger.info(f'     LAYER {layer}')
         # init params for sampling on this layer
         means = []  
@@ -112,7 +120,7 @@ def get_baselines(embeddings, w2s, nlayers):
         patience_count = 0
         for i in np.arange(nembs/bsz-1): 
             batch = [next(gen) for j in range(bsz)]
-            means.append( self_similarity(all_embs[layer,batch,:]).item() )
+            means.append( self_similarity(all_src_embs[layer,batch,:]).item() )
             # the variance of the means is the sample variance (see "The Method of Batch Means")
             sample_var = np.nan if len(means)==1 else np.var(means, ddof=1)
 
@@ -127,7 +135,39 @@ def get_baselines(embeddings, w2s, nlayers):
         # the mean of the means, once it stops varying too much (see "The Method of Batch Means")
         baselines_metric1[layer] = np.mean(means) # not open to interpretation, given in the paper
         
-        baselines_metric3[layer] = max_expl_var(all_embs[layer,:,:]) # INTERPRETATION 1: baseline_metric3
+        baselines_metric3[layer] = max_expl_var(all_src_embs[layer,:,:]) # INTERPRETATION 1: baseline_metric3 <- this is the right one
+    
+    if w2s['target']:
+        nembs=all_tgt_embs.shape[1]
+        bsz=max(2,round(nembs*0.001)) # bsz = 0.1% of the data
+        n=(bsz**2-bsz)/2       # num of elements from which we average for computing the cosine-similarity on each batch
         
+        for layer in range(nlayers,13):
+            dec_layer=layer-nlayers
+            logger.info(f'     LAYER {layer}')
+            # init params for sampling on this layer
+            means = []  
+            gen = sample_gen(nembs,[])
+            patience_count = 0
+            for i in np.arange(nembs/bsz-1): 
+                batch = [next(gen) for j in range(bsz)]
+
+                means.append( self_similarity(all_tgt_embs[dec_layer,batch,:]).item() )
+                # the variance of the means is the sample variance (see "The Method of Batch Means")
+                sample_var = np.nan if len(means)==1 else np.var(means, ddof=1)
+
+                logger.info(f'      mean estim.: {round(means[-1],5)}, var: {sample_var}, patience counter: {patience - patience_count}')
+                # break if is has converged
+                if sample_var<trsh:
+                    patience_count += 1 # allows to accum at least 10 means
+                    if patience_count > patience:
+                        break
+                else:
+                    patience_count = 0
+            # the mean of the means, once it stops varying too much (see "The Method of Batch Means")
+            baselines_metric1[layer] = np.mean(means) # not open to interpretation, given in the paper
+            
+            baselines_metric3[layer] = max_expl_var(all_tgt_embs[dec_layer,:,:]) # INTERPRETATION 1: baseline_metric3 <- this is the right one
+            
 
     return baselines_metric1, baselines_metric3

@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 
 #from utils.BertMT_hybrid import BertMT_hybrid                          
-from utils.BertMT_hybrid import BertTranslator, BertSimpleTranslator
+from utils.BertMT_hybrid import BertTranslator, BertSimpleTranslator, MTtranslator
 
 
 from torch.utils.data import DataLoader
@@ -33,12 +33,11 @@ export MAX_LEN=128
 export trainBS=16
 export valBS=8
 export outdir=/scratch/project_2001970/Geometry/BertMThybrid/testoutput
-srun --account=project_2001970 --partition=gputest --gres=gpu:v100:1,nvme:2 --mem=8GB \
+srun --account=project_2001970 --partition=gputest --gres=gpu:v100:1,nvme:2 --mem=8GB --time=00:15:00 \
   python BertMT_hybrid_train.py \
     --learning_rate=3e-5 \
     --do_train \
     --do_predict \
-    --do_align \
     --val_check_interval 0.33 \
     --adam_eps 1e-06 \
     --num_train_epochs 6 \
@@ -55,10 +54,10 @@ srun --account=project_2001970 --partition=gputest --gres=gpu:v100:1,nvme:2 --me
     --sortish_sampler  \
     --limit_train_batches 100 \
     --limit_val_batches 20 \
-     --num_sents_align 1000 \
-     --num_epochs_align 2\
-     --log_every_n_align 25 \
-     --fast_dev_run
+    --only_train_MT \
+    --load_aligned_BERT_path /scratch/project_2001970/Geometry/BertMThybrid/testoutput/with_alignment/en-de/best_alignment_network.pt \
+    # --num_sents_align 1000 --num_epochs_align 2 --log_every_n_align 25 \
+    #--fast_dev_run   #--do_align 
 
 '''                                                   
 
@@ -178,33 +177,56 @@ def main(args):
         print(f'Using {args.gpus} CUDA device(s)')
         device='cuda'
 
-    #TO DO: 1. Train a BERT model with the finetuning_alignment.py script from Cao (adapt it to have model=BERT and base_model=MTencoder)
-    #       2. Modify BertTranslator s.t. if a bert model is passed, then the bert encoder starts with those parameters (Can I use `torch.nn.Module.load_state_dict`?)
-    if args.do_align: 
-        alignedBERT_state_dict = do_finetuning_alignment(
-                model=args.bert_type,
-                model_base=args.mt_mname,
-                num_sent=args.num_sents_align,
-                num_epochs=args.num_epochs_align,
-                outdir=args.output_dir ,
-                log_every_n_batches=args.log_every_n_align
-            )
+    if args.only_train_MT:
+        model = MTtranslator(args)
+    else:
+        if args.load_aligned_BERT_path:
+            print(f'loading pre-aligned Bert embeddings from: {args.load_aligned_BERT_path}',flush=True)
+            args.do_align = False # don't redo alignment
+            alignedBERT_state_dict = torch.load(args.load_aligned_BERT_path, map_location=torch.device(device))
+            if 'state_dict' in alignedBERT_state_dict.keys():
+                alignedBERT_state_dict = alignedBERT_state_dict['state_dict']  
 
-    model = BertSimpleTranslator(args)
-    #model = BertTranslator(args) 
-    
-    if args.do_align:
-        # initialize bert & linear projection with the aligned model
-        model.model.bert.load_state_dict(alignedBERT_state_dict)
-    
+
+        if args.do_align: 
+            alignedBERT_state_dict = do_finetuning_alignment(
+                    model=args.bert_type,
+                    model_base=args.mt_mname,
+                    num_sent=args.num_sents_align,
+                    num_epochs=args.num_epochs_align,
+                    outdir=args.output_dir ,
+                    log_every_n_batches=args.log_every_n_align
+                )
+
+        #model = BertSimpleTranslator(args)
+        model = BertTranslator(args) 
+        
+        if args.do_align or args.load_aligned_BERT_path:
+            # initialize bert & linear projection with the aligned model
+            model.model.bert.load_state_dict(alignedBERT_state_dict)
+        
+        if args.load_pretrained_BertMT_path:
+            args.resume_from_checkpoint = args.load_pretrained_BertMT_path
+            '''
+            print(f'loading finetuned hybrid BERT-MT model from: {args.load_pretrained_BertMT_path}',flush=True)
+            pretrained_state_dict = torch.load(load_path, map_location=torch.device(device))
+            if 'state_dict' in pretrained_state_dict.keys():
+                pretrained_state_dict = pretrained_state_dict['state_dict']  
+                model.load_state_dict(pretrained_state_dict)
+            '''
     #######################
     logger = True 
+    #from pytorch_lightning.loggers import TensorBoardLogger
+    #logger = TensorBoardLogger("tb_logs", name="my_hybrid_model")
     train_params = {} 
     if args.gpus and args.gpus > 1: 
         train_params["distributed_backend"] = "ddp" 
 
 
     pl.seed_everything(args.seed)
+    
+    metrics_save_path = Path(args.output_dir) / "MTonly_metrics.json"
+    print(f'parameters and metrics to be saved in {metrics_save_path} \n')
     
     trainer = pl.Trainer.from_argparse_args(args, 
         weights_summary=None, 
@@ -246,10 +268,18 @@ if __name__ == "__main__":
     parser.add_argument("--num_sents_align", type=int, default=200000, help="Number of sentences used in Cao's alignment method.")
     parser.add_argument("--num_epochs_align", type=int, default=10, help="Number of epochs for learning Cao's alignment method.")
     parser.add_argument("--log_every_n_align", type=int, default=100, help="How often to report results when doing Cao's alignment method.") 
+    parser.add_argument("--load_aligned_BERT_path", type=str, help="Path to an aligned Bert state_dict.")
+ 
 
+    parser.add_argument("--load_pretrained_BertMT_path", type=str, nargs='+', help="Path to a BertMT hybrid model state_dict.")
+    parser.add_argument("--only_train_MT", action="store_true", help="Only train the MT model.")
+    parser.add_argument("--reinit_MTdecoder", action="store_true", help="random re-initialization of the MT decoder parameters.")
+    parser.add_argument("--reinit_MTencoder", action="store_true", help="random re-initialization of the MT encoder parameters.")
+    
+    
     args = parser.parse_args()  
     print(f'train bsz: {args.train_batch_size}, eval bsz: {args.eval_batch_size}, test bsz: {args.test_batch_size}')          
-    import ipdb
+    #import ipdb
     #with ipdb.launch_ipdb_on_exception():                                             
     #    main(args)
     main(args)
@@ -294,4 +324,68 @@ srun --account=project_2001970 --time=05:00:00 --mem-per-cpu=40G --partition=gpu
     --log_every_n_align 250
 
 
+
+
+# TRAIN ONLY MT FROM SCRATCH:
+
+tgtlang=de
+outdir=/scratch/project_2001970/Geometry/BertMThybrid/testoutput/pltrainer_without_alignment/en-${tgtlang}/onlyMT_trainEncDecFromScratch
+MAX_LEN=128
+DATA_DIR=/scratch/project_2001970/Geometry/en_${tgtlang}
+PYTHONPATH=/scratch/project_2001970/transformers:/scratch/project_2001970/transformers/examples:${PYTHONPATH}
+
+
+cd  /projappl/project_2001970/Geometry/code
+source /projappl/project_2001970/Geometry/env/bin/activate
+
+
+#srun --account=project_2001970 --partition=gputest --gres=gpu:v100:1,nvme:32 --mem=20GB --time=00:15:00  \
+
+srun --account=project_2001970 --time=20:00:00 --mem-per-cpu=42G --partition=gpu --gres=gpu:v100:1,nvme:32 \
+ python BertMT_hybrid_train.py     \
+ --learning_rate=3e-5               \
+ --do_train   --do_predict  --num_train_epochs 50     \
+ --max_source_length $MAX_LEN  --max_target_length $MAX_LEN  --val_max_target_length $MAX_LEN  --test_max_target_length $MAX_LEN   \
+ --train_batch_size=128  --test_batch_size=128  --eval_batch_size=128  --accumulate_grad_batches 2  \
+ --warmup_steps 5000  --lr_scheduler linear --adam_eps 1e-06 --adam_beta1 0.9 --adam_beta2 0.998  --weight_decay 1e-2   --label_smoothing 0.1        \
+ --data_dir $DATA_DIR      \
+ --output_dir ${outdir}     \
+ --gpus 1     \
+ --mt_mname Helsinki-NLP/opus-mt-en-de  \
+ --sortish_sampler     \
+ --reinit_MTencoder \
+ --reinit_MTdecoder  \
+ --only_train_MT      > ${outdir}/FT_MTonly.out 2> ${outdir}/FT_MTonly.err
+
+
+# TRAIN only MT DECODER FROM SCRATCH:
+
+tgtlang=de
+outdir=/scratch/project_2001970/Geometry/BertMThybrid/testoutput/pltrainer_without_alignment/en-${tgtlang}/onlyMT_trainDecFromScratch
+MAX_LEN=128
+DATA_DIR=/scratch/project_2001970/Geometry/en_${tgtlang}
+PYTHONPATH=/scratch/project_2001970/transformers:/scratch/project_2001970/transformers/examples:${PYTHONPATH}
+
+mkdir -p $outdir
+cd  /projappl/project_2001970/Geometry/code
+source /projappl/project_2001970/Geometry/env/bin/activate
+
+
+#srun --account=project_2001970 --partition=gputest --gres=gpu:v100:1,nvme:32 --mem=20GB --time=00:15:00  \
+
+srun --account=project_2001970 --time=20:00:00 --mem-per-cpu=42G --partition=gpu --gres=gpu:v100:1,nvme:32 \
+ python BertMT_hybrid_train.py     \
+ --learning_rate=3e-5               \
+ --do_train   --do_predict  --num_train_epochs 50     \
+ --max_source_length $MAX_LEN  --max_target_length $MAX_LEN  --val_max_target_length $MAX_LEN  --test_max_target_length $MAX_LEN   \
+ --train_batch_size=128  --test_batch_size=128  --eval_batch_size=128  --accumulate_grad_batches 2  \
+ --warmup_steps 5000  --lr_scheduler linear --adam_eps 1e-06 --adam_beta1 0.9 --adam_beta2 0.998  --weight_decay 1e-2   --label_smoothing 0.1        \
+ --data_dir $DATA_DIR      \
+ --output_dir ${outdir}     \
+ --gpus 1     \
+ --mt_mname Helsinki-NLP/opus-mt-en-de  \
+ --sortish_sampler     \
+ --reinit_MTdecoder  \
+ --only_train_MT      > ${outdir}/FT_MTonly.out 2> ${outdir}/FT_MTonly.err
+ 
 '''

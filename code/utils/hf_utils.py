@@ -179,6 +179,32 @@ class BertHybridDataset(Seq2SeqDataset):
         padding="longest",
         '''
 
+class MarianNMTDataset(Seq2SeqDataset):
+    """A dataset that calls prepare_seq2seq_batch."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.prepare_translation_batch_function = kwargs['prepare_translation_batch_function']
+
+    def __getitem__(self, index) -> Dict[str, str]:
+        index = index + 1  # linecache starts at 1
+        source_line = self.prefix + linecache.getline(str(self.src_file), index).rstrip("\n")
+        tgt_line = linecache.getline(str(self.tgt_file), index).rstrip("\n")
+        assert source_line, f"empty source line for index {index}"
+        assert tgt_line, f"empty tgt line for index {index}"
+        return {
+            "tgt_texts": tgt_line,
+            "src_texts": source_line,
+        }
+
+    def collate_fn(self, batch) -> Dict[str, torch.Tensor]:
+        batch_encoding = self.prepare_translation_batch_function(
+            [x["src_texts"] for x in batch],
+            tgt_texts=[x["tgt_texts"] for x in batch],
+            max_length=self.max_source_length,
+        )
+        return batch_encoding.data
+
 class TranslationDataset(Seq2SeqDataset):
     """A dataset that calls prepare_seq2seq_batch."""
 

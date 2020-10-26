@@ -3,6 +3,7 @@
 ### Requirements & Instalation 
 You need to clone this repo
 ```
+cd path/to/your/git/repos
 git clone https://github.com/Helsinki-NLP/Geometry.git
 cd Geometry
 ```
@@ -36,14 +37,22 @@ pip install -r requirements.txt
 
 ### Usage
 
-To replicate our experiments, you will first need to clone [moses decoder](https://github.com/moses-smt/mosesdecoder.git) and [fast_align](https://github.com/clab/fast_align.git)
-and to download the STS datasets - can do by running our adapted script from [SentEval](https://github.com/facebookresearch/SentEval):
+To replicate our experiments, you will first need to clone [moses decoder](https://github.com/moses-smt/mosesdecoder.git) and [fast_align](https://github.com/clab/fast_align.git); install [eflomal](https://github.com/Helsinki-NLP/eflomal.git)
+; and  download the parallel data and the STS datasets - can do by running our adapted script from [SentEval](https://github.com/facebookresearch/SentEval):
 ```
 cd path/to/your/git/repos
 git clone https://github.com/clab/fast_align.git
 git clone https://github.com/moses-smt/mosesdecoder.git
+git clone https://github.com/Helsinki-NLP/eflomal.git
 
+cd eflomal
+make
+sudo make install
+python3 setup.py install # your venv needs to be activated at this step
+
+cd ../Geometry
 source getSTSdb.sh /path/to/where/you/cloned/mosesdecoder
+source get_data_and_learn_alignment.sh ./data/ # you can also give another directory to download the parallel corpora
 ```
 
 

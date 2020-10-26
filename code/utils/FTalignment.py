@@ -39,7 +39,7 @@ class WordLevelOPUSmt(nn.Module):
 
         
         self.dim = self.mt_model.config.d_model
-        self.max_len = self.mt_tokenizer.max_len
+        self.max_len = self.mt_tokenizer.model_max_length
         self.pad_token_id = self.mt_tokenizer.pad_token_id
         self.device='cpu'
 
@@ -119,13 +119,13 @@ class WordLevelOPUSmt(nn.Module):
 
 
         # encode
-        #features, _, _ = self.mt_model.model.encoder(**all_inputs)
-        features, _, _ = self.mt_model.model.encoder(
+        features = self.mt_model.model.encoder(
             input_ids = all_input_ids,
-            attention_mask = all_input_mask.bool()
+            attention_mask = all_input_mask.bool(),
+            return_dict=True,
             )
-        
-        del _
+        features=features['last_hidden_state']
+
         # for each word, only keep last encoded token.
         all_end_mask = all_end_mask.to(torch.uint8).unsqueeze(-1)
         features_packed = features.masked_select(all_end_mask.bool())
@@ -142,7 +142,7 @@ def get_bert(bert_model, bert_do_lower_case):
     bert = BertModel.from_pretrained(bert_model)
     return tokenizer, bert
 
-class WordLevelBert(nn.Module):
+class WordLevelBert_old(nn.Module):
     """
     Runs BERT on sentences but only keeps the last subword embedding for
     each word.
@@ -229,6 +229,105 @@ class WordLevelBert(nn.Module):
 
         if self.project_output:
             features = self.linear(features)
+        # for each word, only keep last encoded token.
+        all_end_mask = all_end_mask.to(torch.uint8).unsqueeze(-1)
+        features_packed = features.masked_select(all_end_mask.bool())
+        features_packed = features_packed.reshape(-1, features.shape[-1])
+        
+        assert features_packed.shape[0] == packed_len, "Features: {}, \
+            Packed len: {}".format(features_packed.shape[0], packed_len)
+        
+        return features_packed
+
+
+class WordLevelBert(nn.Module):
+    """
+    Runs BERT on sentences but only keeps the last subword embedding for
+    each word.
+    """
+    def __init__(self, bert_type, do_lower_case, outdim=512):
+        super().__init__()
+
+        self.bert_tokenizer = transformers.BertTokenizer.from_pretrained(bert_type)
+        self.bert = transformers.BertModel.from_pretrained(bert_type)
+
+        self.dim = self.bert.pooler.dense.in_features
+        self.max_len = self.bert.embeddings.position_embeddings.num_embeddings
+        self.project_output = False
+        # LINEAR
+        if outdim != self.dim:
+            self.project_output = True
+            self.linear = nn.Linear(self.dim, outdim)
+        if use_cuda:
+            self.cuda()
+    
+    def forward(self, sentences, include_clssep = True):
+        batch_size = 128
+        ann_full = None
+        for i in range(0, len(sentences), batch_size):
+            ann = self.annotate(sentences[i:i+batch_size], 
+                                include_clssep = include_clssep)
+            if ann_full is None:
+                ann_full = ann
+            else:
+                ann_full = torch.cat((ann_full, ann), dim = 0)
+        return ann_full
+    
+    def annotate(self, sentences, include_clssep = True):
+        """
+        Input: sentences, which is a list of sentences
+            Each sentence is a list of words.
+            Each word is a string.
+        Output: an array with dimensions (packed_len, dim).
+            packed_len is the total number of words, plus 2 for each sentence
+            for [CLS] and [SEP].
+        """
+        if include_clssep:
+            packed_len = sum([(len(s) + 2) for s in sentences])
+        else:
+            packed_len = sum([len(s) for s in sentences])
+        
+        # Each row is the token ids for a sentence, padded with zeros.
+        all_input_ids = np.zeros((len(sentences), self.max_len), dtype = int)
+        # Mask with 1 for real tokens and 0 for padding.
+        all_input_mask = np.zeros((len(sentences), self.max_len), dtype = int)
+        # Mask with 1 for the last subword for each word.
+        all_end_mask = np.zeros((len(sentences), self.max_len), dtype = int)
+        max_sent = 0
+        # tokenize with bert tokenizer and add [CLS] and [SEP] tokens
+        for s_num, sentence in enumerate(sentences):
+            tokens = []
+            end_mask = []
+            tokens.append("[CLS]")
+            end_mask.append(int(include_clssep))
+            for word in sentence:
+                word_tokens = self.bert_tokenizer.tokenize(word)
+                assert len(word_tokens) > 0, \
+                    "Unknown word: {} in {}".format(word, sentence)
+                for _ in range(len(word_tokens)):
+                    end_mask.append(0)
+                end_mask[-1] = 1
+                tokens.extend(word_tokens)
+            tokens.append("[SEP]")
+            end_mask.append(int(include_clssep))
+            input_ids = self.bert_tokenizer.convert_tokens_to_ids(tokens)
+            
+            all_input_ids[s_num, :len(input_ids)] = input_ids
+            all_input_mask[s_num, :len(input_ids)] = 1
+            all_end_mask[s_num, :len(end_mask)] = end_mask
+            max_sent = max(max_sent, len(input_ids))
+        all_input_ids = all_input_ids[:, :max_sent]
+        all_input_ids = from_numpy(np.ascontiguousarray(all_input_ids))
+        all_input_mask = all_input_mask[:, :max_sent]
+        all_input_mask = from_numpy(np.ascontiguousarray(all_input_mask))
+        all_end_mask = all_end_mask[:, :max_sent]
+        all_end_mask = from_numpy(np.ascontiguousarray(all_end_mask))
+        
+        # all_input_ids: num_sentences x max_sentence_len
+        features = self.bert(all_input_ids, attention_mask = all_input_mask.bool(), return_dict=True)
+
+        if self.project_output:
+            features = self.linear(features.last_hidden_state)
         # for each word, only keep last encoded token.
         all_end_mask = all_end_mask.to(torch.uint8).unsqueeze(-1)
         features_packed = features.masked_select(all_end_mask.bool())
@@ -435,7 +534,8 @@ def align_bert_multiple(
             loss.backward()
             trainer.step()
             trainer.zero_grad()
-                
+    
+    print(f'saving into: {outdir}/best_alignment_network.pt')            
     torch.save({'state_dict': model.state_dict(),
                 'trainer' : trainer.state_dict(),}, f'{outdir}/best_alignment_network.pt')
 

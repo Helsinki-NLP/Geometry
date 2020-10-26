@@ -7,7 +7,7 @@ import torch
 import time
 import transformers                                                     
 from tqdm import tqdm
-
+from typing import  List
 
 #from utils.BertMT_hybrid import BertMT_hybrid                          
 from utils.BertMT_hybrid import BertTranslator, BertSimpleTranslator
@@ -20,6 +20,7 @@ from utils.hf_utils import (
     pickle_save, 
     flatten_list, 
     calculate_bleu,
+    MarianNMTDataset,
 )
                                        
 
@@ -108,6 +109,7 @@ def do_finetuning_alignment(
     return aligned_state_dict
 
 
+
 def get_dataloader(
     model,
     type_path: str, 
@@ -142,56 +144,115 @@ def get_dataloader(
         
     return dataloader
 
-metrics_save_path="metrics.json"
-def report_metrics(metrics):
-    print(metrics, flush=True)
+def report_metrics(metrics, type_path):
+    if 'preds' in metrics[type_path][-1].keys(): 
+        pred_metrics = {'STEP': metrics[type_path][-1]['STEP'], 
+                       'preds': metrics[type_path][-1].pop('preds'),
+                     'targets': metrics[type_path][-1].pop('target') 
+                    }
+        save_json(pred_metrics, metrics_save_path.with_name('latest_gen_utterances.json'))
+    
+    if not type_path == 'val':
+        for old_key in metrics[type_path][-1].keys():
+            new_key = type_path.join(old_key.split('val')) if 'val' in old_key else old_key
+            metrics[type_path][-1][new_key] = metrics[type_path][-1].pop(old_key)
+
+    print(type_path, metrics[type_path][-1],flush=True)
+    print('')    
     save_json(metrics, metrics_save_path)
 
-def val_routine(model, val_loader, loss_fn, device, return_val_predictions=False, limit_val_batches=None):
+def get_dataloader2(
+    model,
+    tokenizer,
+    type_path: str, 
+    batch_size: int, 
+    max_target_length: int, 
+    n_obs: int,
+    num_workers: int, 
+    shuffle: bool = False,
+    sampler=None,
+    **kwargs,
+    ) -> DataLoader:
+    
+    #from torch.utils.data import DataLoader
+    dataset = model.dataset_class(
+            tokenizer=tokenizer ,
+            type_path=type_path,
+            n_obs=n_obs,
+            max_target_length=max_target_length,
+            prepare_translation_batch_function=tokenizer.prepare_seq2seq_batch,
+            **kwargs
+        )  
+    
+        
+    dataloader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            collate_fn=dataset.collate_fn,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            sampler=sampler,
+        )
+        
+    return dataloader
+
+metrics_save_path="metrics.json"
+
+
+def ids_to_clean_text(
+        model, 
+        tokenizer,
+        generated_ids,
+        ):
+
+        gen_text = tokenizer.batch_decode(
+            generated_ids, 
+            skip_special_tokens=True, 
+            clean_up_tokenization_spaces=True
+        )
+
+        return lmap(str.strip, gen_text)
+
+def val_routine_MT(
+    model,
+    tokenizer, 
+    val_loader, 
+    loss_fn, 
+    device, 
+    val_stepcount, 
+    return_val_predictions=False, 
+    limit_val_batches=None
+    ):
     val_losses = list()
     gen_times = list()
     summ_lens = list()
     bleus = list()
     predictions = list()
     targets = list()
-    for batch in tqdm(val_loader):
+    for batch in val_loader:
         batch = {k:v.to(device) for k,v in batch.items()}
-        lm_labels = batch["decoder_input_ids"].clone()
+        lm_labels = batch["labels"].clone()
         
         # s1. forward
         with torch.no_grad():
             t0 = time.time()
-            generated_ids = model.model.generate(
+            generated_ids = model.generate(
                     batch["input_ids"],
                     attention_mask=batch["attention_mask"],
-                    MT_attention_mask=batch['MT_attention_mask'],
-                    MT_input_ids=batch['MT_input_ids'],
-                    token_type_ids=batch['token_type_ids'],
                     use_cache=True
                 )
             gen_time = (time.time() - t0) / batch["input_ids"].shape[0]
-            preds: List[str] = model.ids_to_clean_text(generated_ids)
-            target: List[str] = model.ids_to_clean_text(batch["decoder_input_ids"])   
+            # todo: cambiar esta rutina... batch.decode no hace el truco para oraciones en el src-lang
+            preds: List[str] = ids_to_clean_text(model, tokenizer, generated_ids)
+            target: List[str] = ids_to_clean_text(model, tokenizer, batch["labels"])   
             
-            outputs = model(
-                    input_ids=batch['input_ids'], 
-                    attention_mask=batch['attention_mask'], 
-                    MT_input_ids=batch['MT_input_ids'],
-                    MT_attention_mask=batch['MT_attention_mask'], 
-                    token_type_ids=batch['token_type_ids'],
-                    decoder_input_ids=batch['decoder_input_ids'], 
-                    decoder_attention_mask=batch['decoder_attention_mask'],
-                    use_cache=False
-                )
-
-            lm_logits = outputs[0]
-            assert lm_logits.shape[-1] == model.model.config.vocab_size
+            outputs = model(return_dict=True,**batch) 
+            #lm_logits = outputs['logits']
+            #assert lm_logits.shape[-1] == model.config.vocab_size
 
             # s2. compute objective fn
-            loss = loss_fn(
-                    lm_logits.view(-1, lm_logits.shape[-1]), 
-                    lm_labels.view(-1)
-                )
+            loss = outputs['loss']
+            #loss = loss_fn(lm_logits.view(-1, lm_logits.shape[-1]), lm_labels.view(-1) )
             
         summ_len = np.mean(lmap(len, generated_ids))
         bleu=calculate_bleu(preds, target)
@@ -206,21 +267,130 @@ def val_routine(model, val_loader, loss_fn, device, return_val_predictions=False
             print(f'\nreached limit_val_batches={limit_val_batches}')
             break
 
-    print('end of validation loop: ') 
-    base_metrics = {'mean_val_bleu':np.mean(bleus)}
+    base_metrics = {'STEP':val_stepcount, 'mean_val_bleu':np.mean(bleus).round(decimals=8)}
     base_metrics.update(
-            mean_val_loss= np.mean(val_losses), 
-            mean_gen_time=np.mean(gen_times), 
-            mean_gen_len=np.mean(summ_lens), 
+            mean_val_loss=np.mean(val_losses).round(decimals=8), 
+            mean_gen_time=np.mean(gen_times).round(decimals=3), 
+            mean_gen_len=np.mean(summ_lens).round(decimals=3), 
             
         )       
-    report_metrics(base_metrics)
     if return_val_predictions:
         base_metrics.update(preds=predictions, target=targets)
-        print(f'example of predictions on this validation loop: \n{predictions[:2]}')
-        print(f'targets of those predicted sentences: \n{targets[:2]}')
+
+        #print(f'example of predictions on this validation loop: \n{predictions[:2]}')
+        #print(f'targets of those predicted sentences: \n{targets[:2]}')
 
     return base_metrics
+
+def val_routine(
+    model, 
+    val_loader, 
+    loss_fn, 
+    device, 
+    val_stepcount, 
+    return_val_predictions=False, 
+    limit_val_batches=None
+    ):
+    val_losses = list()
+    gen_times = list()
+    summ_lens = list()
+    bleus = list()
+    predictions = list()
+    targets = list()
+    for batch in val_loader:
+        batch = {k:v.to(device) for k,v in batch.items()}
+        lm_labels = batch["labels"].clone()
+        
+        # s1. forward
+        with torch.no_grad():
+            t0 = time.time()
+            generated_ids = model.model.generate(
+                    batch["input_ids"],
+                    attention_mask=batch["attention_mask"],
+                    MT_attention_mask=batch['MT_attention_mask'],
+                    MT_input_ids=batch['MT_input_ids'],
+                    token_type_ids=batch['token_type_ids'],
+                    use_cache=True
+                )
+            gen_time = (time.time() - t0) / batch["input_ids"].shape[0]
+            preds: List[str] = model.ids_to_clean_text(generated_ids)
+            target: List[str] = model.ids_to_clean_text(batch["labels"])   
+            
+            outputs = model(return_dict=True, use_cache=False,**batch)
+            #lm_logits = outputs['logits']
+            #assert lm_logits.shape[-1] == model.config.vocab_size
+
+            # s2. compute objective fn
+            loss = outputs['loss']
+            #loss = loss_fn(lm_logits.view(-1, lm_logits.shape[-1]), lm_labels.view(-1) )
+            
+        summ_len = np.mean(lmap(len, generated_ids))
+        bleu=calculate_bleu(preds, target)
+        val_losses.append(loss.item())
+        gen_times.append(gen_time)
+        summ_lens.append(summ_len)
+        bleus.append(bleu['bleu'])
+        predictions += preds
+        targets += target
+        
+        if isinstance(limit_val_batches,int) and len(val_losses) > limit_val_batches:
+            print(f'\nreached limit_val_batches={limit_val_batches}')
+            break
+
+    base_metrics = {'STEP':val_stepcount, 'mean_val_bleu':np.mean(bleus).round(decimals=8)}
+    base_metrics.update(
+            mean_val_loss=np.mean(val_losses).round(decimals=8), 
+            mean_gen_time=np.mean(gen_times).round(decimals=3), 
+            mean_gen_len=np.mean(summ_lens).round(decimals=3), 
+            
+        )       
+    if return_val_predictions:
+        base_metrics.update(preds=predictions, target=targets)
+
+        #print(f'example of predictions on this validation loop: \n{predictions[:2]}')
+        #print(f'targets of those predicted sentences: \n{targets[:2]}')
+
+    return base_metrics
+
+def test_routine(
+    model,
+    test_loader, 
+    loss_fn, 
+    device,
+    test_stepcount,
+    limit_test_batches, 
+    load_path=None
+    ):
+    print(f'loading finetuned hybrid BERT-MT model from: {load_path}',flush=True)
+    pretrained_state_dict = torch.load(load_path, map_location=torch.device(device))
+    if 'state_dict' in pretrained_state_dict.keys():
+        pretrained_state_dict = pretrained_state_dict['state_dict']  
+        model.load_state_dict(pretrained_state_dict)
+
+    model.eval()
+    base_metrics = val_routine(
+            model, 
+            test_loader, 
+            loss_fn, 
+            device,
+            test_stepcount, 
+            return_val_predictions=True,
+            limit_val_batches=limit_test_batches
+        )
+
+    return base_metrics
+
+
+def weights_init(m):
+    if isinstance(m,(transformers.modeling_bart.Attention, transformers.modeling_bart.DecoderLayer, torch.nn.modules.container.ModuleList)):
+        for item in m.children():
+            item.apply(weights_init)
+    elif isinstance(m,torch.nn.modules.normalization.LayerNorm):
+        torch.nn.init.uniform_(m.weight.data)
+    elif isinstance(m,torch.nn.modules.linear.Identity):
+        pass
+    else: 
+        torch.nn.init.xavier_uniform_(m.weight.data)
 
 def config_optimizer(
     model, 
@@ -228,6 +398,7 @@ def config_optimizer(
     adam_eps,
     freeze_decoder=False, 
     freeze_bert=False,
+    freeze_embeddings=False,
     ):
     for param in model.model.parameters():
         param.requires_grad = False
@@ -239,8 +410,16 @@ def config_optimizer(
     if not freeze_bert:
         for param in model.model.bert.parameters():
             param.requires_grad = True
+
+    if freeze_embeddings:
+        for param in model.model.mt_model.model.decoder.embed_tokens.parameters() :
+            param.requires_grad = False
+        for param in model.model.bert.bert.embeddings.parameters():
+            param.requires_grad = False        
+
         #optimizer = AdamW(self.model.parameters(), lr=self.hparams.learning_rate, eps=self.hparams.adam_epsilon)
-    optimizer = AdamW(
+    print(f'Optimizer will update parameters for the decoder:{not freeze_decoder} AND for bert:{not freeze_bert}. freeze_embeddings:{freeze_embeddings}')
+    optimizer = transformers.AdamW(
             filter(lambda p: p.requires_grad, model.model.parameters()),
             lr=learning_rate, 
             eps=adam_eps 
@@ -266,8 +445,7 @@ def main(args):
         print("Using CUDA!")
         device='cuda'
 
-    #TO DO: 1. Train a BERT model with the finetuning_alignment.py script from Cao (adapt it to have model=BERT and base_model=MTencoder)
-    #       2. Modify BertTranslator s.t. if a bert model is passed, then the bert encoder starts with those parameters (Can I use `torch.nn.Module.load_state_dict`?)
+
     if args.load_aligned_BERT_path:
         print(f'loading pre-aligned Bert embeddings from: {args.load_aligned_BERT_path}',flush=True)
         args.do_align = False # don't redo alignment
@@ -284,141 +462,214 @@ def main(args):
                 outdir=args.output_dir ,
                 log_every_n_batches=args.log_every_n_align
             )
+    
 
     model = BertSimpleTranslator(args)
     #model = BertTranslator(args) 
-    
+        
     if args.do_align or args.load_aligned_BERT_path:
         # initialize bert & linear projection with the aligned model
         model.model.bert.load_state_dict(alignedBERT_state_dict)
-    
+        
     model = model.to(device)
+    
+    if args.reinit_decoder:
+        print('Random re-initialization of MT decoder parameters. SEED: 12345')
+        torch.manual_seed(12345)
+        for m in model.model.mt_model.model.decoder.children():
+            weights_init(m)
+
     # define optimizer
     #optimizer = transformers.AdamW(model.parameters(), lr=args.learning_rate, eps=args.adam_epsilon )
     optimizer = config_optimizer(
-    model, 
-    learning_rate=args.learning_rate, 
-    adam_eps=args.adam_epsilon,
-    freeze_decoder=args.freeze_decoder, 
-    freeze_bert=args.freeze_bert,
-    args
-    )
+            model, 
+            learning_rate=args.learning_rate, 
+            adam_eps=args.adam_epsilon,
+            freeze_decoder=args.freeze_decoder, 
+            freeze_bert=args.freeze_bert,
+            freeze_embeddings=args.freeze_embeddings,
+        )
 
     # define loss
     loss_fn = model.model.loss_fct1
 
-    # load data
     dataset_kwargs: dict = dict(
             data_dir=args.data_dir,
             max_source_length=args.max_source_length,
             prefix=model.model.config.prefix or "",
         )
 
+    val_stepcount = 0
+    test_stepcount = 0
+    allmetrics = {'val':list(),'test':list()}
+    if args.do_train:
+        # load data
+        train_loader = get_dataloader(
+                model,
+                type_path="train",
+                batch_size=args.train_batch_size, 
+                max_target_length=args.max_target_length, 
+                n_obs=args.n_train,
+                num_workers = args.num_workers,
+                shuffle=True, 
+                **dataset_kwargs
+            )
 
-    train_loader = get_dataloader(
-            model,
-            type_path="train",
-            batch_size=args.train_batch_size, 
-            max_target_length=args.max_target_length, 
-            n_obs=args.n_train,
-            num_workers = args.num_workers,
-            shuffle=True, 
-            **dataset_kwargs
-        )
+        val_loader = get_dataloader(
+                model,
+                type_path="val",   
+                batch_size=args.eval_batch_size, 
+                max_target_length=args.max_target_length, 
+                n_obs=args.n_val,
+                num_workers = args.num_workers,
+                shuffle=False,
+                **dataset_kwargs
+            )
 
-    val_loader = get_dataloader(
-            model,
-            type_path="val",   
-            batch_size=args.eval_batch_size, 
-            max_target_length=args.max_target_length, 
-            n_obs=args.n_val,
-            num_workers = args.num_workers,
-            shuffle=False,
-            **dataset_kwargs
-        )
+        # --------------------------
+        # VALIDATION before TRAIN
+        # --------------------------
 
-    # --------------------------
-    # TRAIN and VALIDATION loop
-    # --------------------------
-    print('\n\nStarting train+validation routine', flush=True)
-    for epoch in range(args.max_epochs):
+        
         # VALIDATION
-        print(f'Running validation loop.')
+        print(f'Running validation for the {val_stepcount}-th time')
         model.eval()
-        basic_metrics = val_routine(
+        base_metrics = val_routine(
                 model, 
                 val_loader, 
                 loss_fn, 
                 device, 
+                val_stepcount,
                 return_val_predictions=True,
                 limit_val_batches=args.limit_val_batches
             )
+        allmetrics['val'].append(base_metrics)
+        report_metrics(allmetrics, 'val')
+        
+        print('\n\nStarting train+validation routine', flush=True)
+        # --------------------------
+        # TRAIN and VALIDATION loop
+        # --------------------------
+        for epoch in range(args.max_epochs):       
+            # -------
+            # TRAIN:
+            # -------
+            model.train()
+            print(f'\n...starting epoch {epoch+1}/{args.max_epochs}', flush=True) 
+            losses = list()
+            for batch in train_loader:
+                batch = {k:v.to(device) for k,v in batch.items()}
+                lm_labels = batch["labels"].clone()
+                
+                # s1. forward
+                outputs = model(return_dict=True,**batch) 
+                #lm_logits = outputs['logits']
+                #assert lm_logits.shape[-1] == model.config.vocab_size
 
-        # TRAIN:
-        model.train()
-        print(f'\n...starting epoch {epoch+1}/{args.max_epochs}', flush=True) 
-        losses = list()
-        for batch in tqdm(train_loader):
-            batch = {k:v.to(device) for k,v in batch.items()}
-            lm_labels = batch["decoder_input_ids"].clone()
-            
-            # s1. forward
-            outputs = model(
-                    input_ids=batch['input_ids'], 
-                    attention_mask=batch['attention_mask'], 
-                    MT_input_ids=batch['MT_input_ids'],
-                    MT_attention_mask=batch['MT_attention_mask'], 
-                    token_type_ids=batch['token_type_ids'],
-                    decoder_input_ids=batch['decoder_input_ids'], 
-                    decoder_attention_mask=batch['decoder_attention_mask'],
-                    use_cache=False
-                )
+                # s2. compute objective fn
+                loss = outputs['loss']
+                #loss = loss_fn(lm_logits.view(-1, lm_logits.shape[-1]), lm_labels.view(-1) )
+                
+                # s3. cleaning the gradient
+                model.zero_grad()
 
-            lm_logits = outputs[0]
-            assert lm_logits.shape[-1] == model.model.config.vocab_size
+                # s4. accumulate the partial derivatives fo the loss w.r.t. parameters
+                loss.backward()
 
-            # s2. compute objective fn
-            loss = loss_fn(
-                    lm_logits.view(-1, lm_logits.shape[-1]), 
-                    lm_labels.view(-1)
-                )
-            coso = loss_fn( lm_logits.view(-1, lm_logits.shape[-1]),  lm_labels.view(-1)    )
-            # s3. cleaning the gradient
-            model.zero_grad()
+                # s5. make a step
+                optimizer.step()
 
-            # s4. accumulate the partial derivatives fo the loss w.r.t. parameters
-            loss.backward()
-
-            # s5. make a step
-            optimizer.step()   #with torch.no_grad(): model.params=model.params-eta*model.params.grad
-
-            losses.append(loss.item())
-            # logging
-            if len(losses) % 100 == 0:
-                print(f'step {len(losses)} of epoch {epoch+1}, train_loss: {torch.tensor(losses).mean():3f}')
-            
-            if isinstance(args.limit_train_batches,int) and len(losses) > args.limit_train_batches:
-                print(f'reached limit_train_batches={args.limit_train_batches}')
-                break
-            
-            if (len(losses) % round(len(train_loader)*args.val_check_interval)) == 0:
-                model.eval()
-                print(f'running validation at train step {len(losses)} since there are {len(train_loader)} batches and --val_check_interval={args.val_check_interval}', flush=True)
-                basic_metrics = val_routine(
-                        model, 
-                        val_loader, 
-                        loss_fn, 
-                        device, 
-                        return_val_predictions=True,
-                        limit_val_batches=args.limit_val_batches
+                losses.append(loss.item())
+                # logging
+                if len(losses) % 250 == 0:
+                    print(f'step {len(losses)} of epoch {epoch+1}, train_loss: {torch.tensor(losses).mean():3f}', flush=True)
+                
+                if isinstance(args.limit_train_batches,int) and len(losses) > args.limit_train_batches:
+                    print(f'reached limit_train_batches={args.limit_train_batches}')
+                    break
+                
+                if len(losses) == round(10000/args.train_batch_size):
+                    print(f'saving into: {args.output_dir}/finetuned_network_step_10k.pt')            
+                    #torch.save({'state_dict': model.state_dict(), 'optimizer' : optimizer.state_dict(),}, f'{args.output_dir}/finetuned_network_step_10k.pt')    
+       
+                # -----------
+                # VALIDATION
+                # -----------
+                if (len(losses) % int(len(train_loader)*args.val_check_interval)) == 0:
+                    model.eval()
+                    val_stepcount+=1
+                    print(f'Running validation for the {val_stepcount}-th time, at train step {len(losses)} since there are {len(train_loader)} batches and --val_check_interval={args.val_check_interval}', flush=True)
+                    base_metrics = val_routine(
+                            model, 
+                            val_loader, 
+                            loss_fn, 
+                            device,
+                            val_stepcount, 
+                            return_val_predictions=True,
+                            limit_val_batches=args.limit_val_batches
                     )
-                model.train()
-        # logging
-        print(f'Epoch {epoch+1}, train_loss: {torch.tensor(losses).mean():3f}', flush=True)
-        
+                    allmetrics['val'].append(base_metrics)
+                    #print('end of validation loop: ', flush=True) 
+                    report_metrics(allmetrics, 'val')
 
-        
-  
+                    model.train()
+            # logging
+            print(f'Epoch {epoch+1}, train_loss: {torch.tensor(losses).mean():3f}', flush=True)
+           
+        print(f'saving into: {args.output_dir}/best_alignment_network.pt')            
+        torch.save({'state_dict': model.state_dict(),
+                    'optimizer' : optimizer.state_dict(),}, f'{args.output_dir}/best_finetuned_network.pt')    
+       
+
+    if args.do_predict:
+        # -----
+        # TEST
+        # -----
+        test_loader = get_dataloader(
+                model,
+                type_path="test",   
+                batch_size=args.test_batch_size, 
+                max_target_length=args.max_target_length, 
+                n_obs=args.n_test,
+                num_workers = args.num_workers,
+                shuffle=False,
+                **dataset_kwargs
+            )
+
+        # --------------------------
+        # 
+        # --------------------------
+        # TEST
+        print(f'Running prediction routine')
+                
+        if args.do_train:
+            base_metrics = test_routine(model, test_loader, loss_fn, device,  test_stepcount, args.limit_test_batches, None)
+            allmetrics['test'].append(base_metrics)
+            report_metrics(allmetrics, 'test')
+            print('computing BLEU on the full test set - the above BLEU is a proxy, it is an average of the BLEU score per batch.')
+            #import ipdb; ipdb.set_trace()
+            preds: List[str] = base_metrics['preds']                                                         
+            target: List[str] = base_metrics['target'] 
+            bleu=calculate_bleu(preds, target)
+            allmetrics['BLEU_on_full_test_set'] = [bleu]
+            report_metrics(allmetrics, 'test')
+
+        elif args.load_pretrained_BertMT_path:
+            for path in args.load_pretrained_BertMT_path:
+                base_metrics = test_routine(model, test_loader, loss_fn, device,  test_stepcount, args.limit_test_batches, path)
+                name='_'.join(Path(path).parts[-3:-1])
+
+                allmetrics[f'test_{name}']=list()
+                allmetrics[f'test_{name}'].append(base_metrics)
+                preds: List[str] = base_metrics['preds']                                                         
+                target: List[str] = base_metrics['target'] 
+                report_metrics(allmetrics, f'test_{name}')
+                print('computing BLEU on the full test set - the above BLEU is a proxy, it is an average of the BLEU score per batch.')
+                #import ipdb; ipdb.set_trace()
+                bleu=calculate_bleu(preds, target)
+                allmetrics[f'BLEU_on_full_test_set_{name}'] = [bleu]
+                report_metrics(allmetrics, f'BLEU_on_full_test_set_{name}')
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser() 
@@ -430,50 +681,20 @@ if __name__ == "__main__":
     parser.add_argument("--num_epochs_align", type=int, default=10, help="Number of epochs for learning Cao's alignment method.")
     parser.add_argument("--log_every_n_align", type=int, default=100, help="How often to report results when doing Cao's alignment method.")
     parser.add_argument("--load_aligned_BERT_path", type=str, help="Path to an aligned Bert state_dict.")
+    parser.add_argument("--load_pretrained_BertMT_path", type=str, nargs='+', help="Path to a BertMT hybrid model state_dict.")
     
-
+    parser.add_argument("--freeze_decoder", action="store_true", help="freeze decoder parameters during FTing.")
+    parser.add_argument("--freeze_bert", action="store_true", help="freeze BERT parameters during FTing.")
+    parser.add_argument("--freeze_embeddings", action="store_true", help="freeze embedding layer parameters during FTing.")
+    parser.add_argument("--reinit_decoder", action="store_true", help="random re-initialization of the MT decoder parameters.")
+    
     args = parser.parse_args() 
     #args.gpus=0  
     print(f'train bsz: {args.train_batch_size}, eval bsz: {args.eval_batch_size}, test bsz: {args.test_batch_size}')          
+    
     import ipdb
-    #with ipdb.launch_ipdb_on_exception():                                             
-    #    main(args)
+    with ipdb.launch_ipdb_on_exception():                                             
+        main(args)
     main(args)
 
 
-
-'''
-cd  /projappl/project_2001970/Geometry/code
-source /projappl/project_2001970/Geometry/env/bin/activate
-tgtlang=de
-export PYTHONPATH=/scratch/project_2001970/transformers:/scratch/project_2001970/transformers/examples:${PYTHONPATH}
-export DATA_DIR=/scratch/project_2001970/Geometry/en_${tgtlang}
-export MODELNAME=Helsinki-NLP/opus-mt-en-${tgtlang}
-export MAX_LEN=128
-export BS=16
-
-aligned_BERT_Path=/scratch/project_2001970/Geometry/BertMThybrid/testoutput/with_alignment/en-de/best_alignment_network.pt
-
-
-export outdir=/scratch/project_2001970/Geometry/BertMThybrid/testoutput/simpleTrainer_with_alignment/en-${tgtlang}
-echo -e "RUNNING ROUTINE WITH ALIGNMENT "
-echo -e "   outputs will be stored in: ${outdir} "
-mkdir -p ${outdir}
-srun --account=project_2001970 --time=05:00:00 --mem-per-cpu=40G --partition=gpu --gres=gpu:v100:1,nvme:16 \
-    python BertMT_hybrid_simpletrain.py \
-        --learning_rate=3e-5 \
-        --do_train \
-        --do_predict \
-        --val_check_interval 0.0004 \
-        --adam_eps 1e-06 \
-        --data_dir $DATA_DIR \
-        --max_source_length $MAX_LEN --max_target_length $MAX_LEN --val_max_target_length $MAX_LEN --test_max_target_length $MAX_LEN \
-        --train_batch_size $BS --eval_batch_size $BS --test_batch_size $BS \
-        --output_dir ${outdir} \
-        --gpus 1 \
-        --bert_type 'bert-base-uncased' \
-        --mt_mname ${MODELNAME} \
-        --load_aligned_BERT_path ${aligned_BERT_Path}
-
-
-'''

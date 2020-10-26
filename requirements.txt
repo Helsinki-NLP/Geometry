@@ -6,3 +6,6 @@ sklearn
 mosestokenizer
 h5py
 matplotlib
+opustools
+pycld2
+langid

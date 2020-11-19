@@ -124,7 +124,7 @@ def get_baselines(embeddings, w2s, nlayers):
             # the variance of the means is the sample variance (see "The Method of Batch Means")
             sample_var = np.nan if len(means)==1 else np.var(means, ddof=1)
 
-            logger.info(f'      mean estim.: {round(means[-1],5)}, var: {sample_var}, patience counter: {patience - patience_count}')
+            logger.info(f'      mean estim.: {means[-1]:.5f}, var: {sample_var:.5f}, patience counter: {patience - patience_count}')
             # break if is has converged
             if sample_var<trsh:
                 patience_count += 1 # allows to accum at least 10 means
@@ -156,7 +156,7 @@ def get_baselines(embeddings, w2s, nlayers):
                 # the variance of the means is the sample variance (see "The Method of Batch Means")
                 sample_var = np.nan if len(means)==1 else np.var(means, ddof=1)
 
-                logger.info(f'      mean estim.: {round(means[-1],5)}, var: {sample_var}, patience counter: {patience - patience_count}')
+                logger.info(f'      mean estim.: {means[-1]:.5f}, var: {sample_var:.5f}, patience counter: {patience - patience_count}')
                 # break if is has converged
                 if sample_var<trsh:
                     patience_count += 1 # allows to accum at least 10 means

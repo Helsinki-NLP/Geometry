@@ -26,8 +26,12 @@ from utils import plotting as Plt
 
 def  main(opt):
     
-    samples = load_samples(opt)
-    toks_and_embeddings_paths = Emb.compute_embeddings(opt, samples)
+    if not opt.load_embeddings_path:
+        samples = load_samples(opt)
+        toks_and_embeddings_paths = Emb.compute_embeddings(opt, samples)
+    else:
+        toks_and_embeddings_paths = Emb.emul_compute_embeddings(opt)
+
     
     if opt.only_save_embs:
         print('Saved embeddings ... finishing job')
@@ -35,15 +39,15 @@ def  main(opt):
 
     logger.info('Loading embeddings & tokenized sentences...') 
     metrics={}
-    for modelname, path in toks_and_embeddings_paths.items():
-        tokdsents, embs = Emb.load_embeddings(path)
+    for modelname, paths in toks_and_embeddings_paths.items():
+        tokdsents, embs = Emb.load_embeddings(paths, opt.max_nsents)
         logger.info(f'[*] MODEL: {modelname} ')
         w2s=make_indexer(opt=opt,sents=tokdsents,modname=modelname)
         logger.info('Computing metrics')
 
         metrics[modelname] = compute_similarity_metrics(w2s, modelname, embs)
         logger.info('Saving metrics')
-        dump_similarity_metrics(opt, metrics)
+        dump_similarity_metrics(opt, metrics[modelname],modelname)
 
     if opt.plot_results:
         Plt.makeplot(metrics,opt.outdir)
@@ -62,7 +66,7 @@ def load_samples(opt):
             samples=samples[:20]
     else:
         src_path, tgt_path = opt.data_path
-        logger.info(f'Loading data samples from {src_path} and {tgt_path}')
+        logger.info(f'Loading data samples from [SRC]: {src_path} and [TGT]:{tgt_path}')
         with open(src_path, 'r') as f:
             src_samples = f.readlines()
         
@@ -200,14 +204,16 @@ def compute_similarity_metrics(w2s, modname, embeddings):
             insentsim_decoder=insentsim_dec,
             insentsim_decoder_isotropic=insentsim_dec - b1[-N_LAYERS_dec:]
         )
-    return metricsdict
 
-def dump_similarity_metrics(opt, metrics):
+    return {k:v.numpy() for k,v in metricsdict.items()}
+
+def dump_similarity_metrics(opt, metrics,modelname):
     # DUMP PICKLES
     #if opt.save_results:        
 
     suffix='_simMetrics.pkl' if not opt.dev_params else '_simMetrics_dev.pkl'
-    outfilename = str(opt.outdir)+'/'+'_'.join( metrics.keys() ) + suffix
+    #outfilename = str(opt.outdir)+'/'+'_'.join( metrics.keys() ) + modelname + suffix
+    outfilename = str(opt.outdir)+'/'+ str(modelname) + suffix
     logger.info(f'   dumping similarity measures to {outfilename}')
     pickle.dump(metrics, open(outfilename, 'bw'))
 
@@ -218,10 +224,12 @@ def update_opts_to_devmode(opts):
     logger.info('dev mode activated... overriding parameters:')
     print('                                --debug_mode = True,')
     print('                                --use_samples = True,')
+    print('                                --max_nsents = 25,')
     print('                                --intrasentsim_samplesize = 10,')
     print('                                --isotropycorrection_samplesize = 25')
     print('                                --selfsim_samplesize = 1')
     opts.debug_mode = True
+    opts.max_nsents = 25
     #opts.use_samples=False
     opts.intrasentsim_samplesize = 10
     opts.isotropycorrection_samplesize = 25
@@ -235,7 +243,10 @@ if __name__ == '__main__':
     opt = parser.parse_args()
     if opt.dev_params:
         update_opts_to_devmode(opt)
+    
     if opt.debug_mode:
+        logger.info('HUOM! debug mode activated... ipdb will be launched on exeption ... ')
+
         with ipdb.launch_ipdb_on_exception():
             main(opt)
     else:

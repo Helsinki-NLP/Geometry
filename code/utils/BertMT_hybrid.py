@@ -391,23 +391,23 @@ class BertTranslator(pl.LightningModule):
 
 
         #freeze all parameters 
-        for param in model.model.parameters():
+        for param in model.parameters():
             param.requires_grad = False
             
         #unfreeze parameters of the parts needed:
         if not self.hparams.freeze_decoder:
-            for param in model.model.mt_model.model.decoder.parameters():
+            for param in model.mt_model.model.decoder.parameters():
                 param.requires_grad = True
      
         if not self.hparams.freeze_bert:
-            for param in model.model.bert.parameters():
+            for param in model.bert.parameters():
                 param.requires_grad = True
         
         #freeze embedding layers parameters 
         if self.hparams.freeze_embeddings:
-            for param in model.model.mt_model.model.decoder.embed_tokens.parameters() :
+            for param in model.mt_model.model.decoder.embed_tokens.parameters() :
                 param.requires_grad = False
-            for param in model.model.bert.bert.embeddings.parameters():
+            for param in model.bert.bert.embeddings.parameters():
                 param.requires_grad = False        
 
 
@@ -496,7 +496,7 @@ class BertTranslator(pl.LightningModule):
 
     @property
     def mt_pad(self) -> int:
-        return self.model.bert_tokenizer.pad_token_id
+        return self.model.mt_tokenizer.pad_token_id
         
     def save_metrics(self, latest_metrics, type_path) -> None:
         latest_metrics = {k:v.cpu().tolist() if isinstance(v,torch.Tensor) else v for k,v in latest_metrics.items() }
@@ -511,7 +511,7 @@ class BertTranslator(pl.LightningModule):
 
         logs = {name: loss for name, loss in zip(self.loss_names, loss_tensors)}
         # tokens per batch
-        logs["tpb"] = batch["input_ids"].ne(self.tokenizer.pad_token_id).sum() + batch["labels"].ne(self.tokenizer.pad_token_id).sum()
+        logs["tpb"] = batch["input_ids"].ne(self.bert_pad).sum() + batch["labels"].ne(self.mt_pad).sum()
         self.log("toks/batch", logs["tpb"], on_step=False, on_epoch = True, prog_bar=True)
         
         return loss_tensors[0]
@@ -657,6 +657,9 @@ class BertTranslator(pl.LightningModule):
         )
         parser.add_argument("--freeze_encoder", action="store_true")
         parser.add_argument("--freeze_embeds", action="store_true")
+        parser.add_argument("--freeze_decoder", action="store_true", help="freeze decoder parameters during FTing.")
+        parser.add_argument("--freeze_bert", action="store_true", help="freeze BERT parameters during FTing.")
+        parser.add_argument("--freeze_embeddings", action="store_true", help="freeze embedding layer parameters during FTing.")
         parser.add_argument("--sortish_sampler", action="store_true", default=False)
         parser.add_argument("--logger_name", type=str, choices=["default", "wandb", "wandb_shared"], default="default")
         parser.add_argument("--n_train", type=int, default=-1, required=False, help="# examples. -1 means use all.")
@@ -716,6 +719,7 @@ class BertTranslator(pl.LightningModule):
         parser.add_argument("--mt_mname" , type=str, default='Helsinki-NLP/opus-mt-en-de', help="The MT model from huggingface to be used as decoder")
         parser.add_argument("--output_attentions", action="store_true")
         parser.add_argument("--output_hidden_states", action="store_true")
+
         #parser.add_argument('--gpus', type=int, default=0, help='number of gpus to use')
 
         return parser

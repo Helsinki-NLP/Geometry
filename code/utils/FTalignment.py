@@ -11,6 +11,7 @@ import transformers
 import torch.nn as nn
 import torch.nn.functional as F
 from functools import reduce
+from copy import deepcopy
 import time
 
 use_cuda = torch.cuda.is_available()
@@ -32,7 +33,7 @@ class WordLevelOPUSmt(nn.Module):
     Runs an OPUS-mt model on sentences but only keeps the last subword embedding for
     each word.
     """
-    def __init__(self, model):
+    def __init__(self, model, use_decoder=False):
         super().__init__()
         self.mt_tokenizer = transformers.MarianTokenizer.from_pretrained(model)
         self.mt_model = transformers.MarianMTModel.from_pretrained(model)
@@ -135,6 +136,128 @@ class WordLevelOPUSmt(nn.Module):
             Packed len: {}".format(features_packed.shape[0], packed_len)
         
         return features_packed
+
+
+
+class WordLevelOPUSmt_decoder(nn.Module):
+    """
+    Runs an OPUS-mt model on sentences but only keeps the last subword embedding for
+    each word.
+    """
+    def __init__(self, model, use_decoder=True):
+        super().__init__()
+        self.mt_tokenizer = transformers.MarianTokenizer.from_pretrained(model)
+        self.mt_model = transformers.MarianMTModel.from_pretrained(model)
+
+        
+        self.dim = self.mt_model.config.d_model
+        self.max_len = self.mt_tokenizer.model_max_length
+        self.pad_token_id = self.mt_tokenizer.pad_token_id
+        self.device='cpu'
+
+        if use_cuda:
+            self.device='cuda'
+            self.cuda()
+    
+    def forward(self, sentences, include_clssep = True):
+        batch_size = 128
+        ann_full = None
+        for i in range(0, len(sentences), batch_size):
+            ann = self.annotate(sentences[i:i+batch_size], 
+                                include_sep = include_clssep)
+            if ann_full is None:
+                ann_full = ann
+            else:
+                ann_full = torch.cat((ann_full, ann), dim = 0)
+        return ann_full
+    
+    def annotate(self, sentences, include_sep = True):
+        """
+        Input: sentences, which is a list of sentences
+            Each sentence is a list of words.
+            Each word is a string.
+        Output: an array with dimensions (packed_len, dim).
+            packed_len is the total number of words, plus 1 for each sentence
+            for the ending token '</s>'.
+        """
+        if include_sep:
+            packed_len = sum([(len(s) + 1) for s in sentences])
+        else:
+            packed_len = sum([len(s) for s in sentences])
+                
+        '''
+        # tokenize with OPUS-mt tokenizer which adds </s> tokens
+        sents = [' '.join(ss) for ss in sentences]
+        all_inputs=self.mt_tokenizer.prepare_translation_batch(sents)
+        all_inputs = {k:v.to(self.device) for k,v in all_inputs.items()}
+        max_sent = all_inputs['input_ids'].size(1)
+        '''
+
+        # Each row is the token ids for a sentence, padded with pad_token_id.
+        all_input_ids = np.full((len(sentences), self.max_len), self.pad_token_id, dtype = int)
+        # Mask with 1 for real tokens and 0 for padding.
+        all_input_mask = np.zeros((len(sentences), self.max_len), dtype = int)
+        # Mask with 1 for the last subword for each word.
+        all_end_mask = np.zeros((len(sentences), self.max_len), dtype = int)
+
+        # tokenize to get word splits
+        max_sent=0
+        for s_num, sentence in enumerate(sentences):
+            tokens = []
+            end_mask = []
+            for word in sentence:
+                word_tokens = self.mt_tokenizer.tokenize(word)
+                assert len(word_tokens) > 0, \
+                    "Unknown word: {} in {}".format(word, sentence)
+                for _ in range(len(word_tokens)):
+                    end_mask.append(0)
+                end_mask[-1] = 1
+                tokens.extend(word_tokens)
+            tokens.append("</s>")
+            end_mask.append(int(include_sep))
+            input_ids = self.mt_tokenizer.convert_tokens_to_ids(tokens)
+            
+            all_input_ids[s_num, :len(input_ids)] = input_ids
+            all_input_mask[s_num, :len(input_ids)] = 1
+            all_end_mask[s_num, :len(end_mask)] = end_mask
+            max_sent = max(max_sent, len(input_ids))
+
+        all_input_ids = all_input_ids[:, :max_sent]
+        all_input_ids = from_numpy(np.ascontiguousarray(all_input_ids))
+        all_input_mask = all_input_mask[:, :max_sent]
+        all_input_mask = from_numpy(np.ascontiguousarray(all_input_mask))
+        all_end_mask = all_end_mask[:, :max_sent]
+        all_end_mask = from_numpy(np.ascontiguousarray(all_end_mask))
+
+
+        # encode
+        raise NotImplementedError
+        import ipdb; ipdb.set_trace()
+
+        features = self.mt_model(
+            input_ids = all_input_ids,
+            attention_mask = all_input_mask.bool(),
+            labels = labels,
+            return_dict=True,
+            )
+
+        features = self.mt_model.model.encoder(
+            input_ids = all_input_ids,
+            attention_mask = all_input_mask.bool(),
+            return_dict=True,
+            )
+        features=features['last_hidden_state']
+
+        # for each word, only keep last encoded token.
+        all_end_mask = all_end_mask.to(torch.uint8).unsqueeze(-1)
+        features_packed = features.masked_select(all_end_mask.bool())
+        features_packed = features_packed.reshape(-1, features.shape[-1])
+        
+        assert features_packed.shape[0] == packed_len, "Features: {}, \
+            Packed len: {}".format(features_packed.shape[0], packed_len)
+        
+        return features_packed
+
 
 def get_bert(bert_model, bert_do_lower_case):
     from pytorch_pretrained_bert import BertTokenizer, BertModel
@@ -258,7 +381,10 @@ class WordLevelBert(nn.Module):
         if outdim != self.dim:
             self.project_output = True
             self.linear = nn.Linear(self.dim, outdim)
+        
+        self.device='cpu'
         if use_cuda:
+            self.device='cuda'
             self.cuda()
     
     def forward(self, sentences, include_clssep = True):
@@ -355,57 +481,31 @@ def keep_1to1(alignments):
             alignments2.append(a)
     return np.array(alignments2)
 
-def load_align_corpus(sent_path, align_path, max_len = 64, max_sent = np.inf):
+def load_align_corpus(data_path, data_path_tgt, align_path, max_len = 64, min_len = 2, max_sent = np.inf):
     sentences_1 = []
-    sentences_2 = []
-    bad_idx = []
-    with open(sent_path) as sent_file:
-        """Lines should be of the form
-        doch jetzt ist der Held gefallen . ||| but now the hero has fallen .
-        
-        Result: 
-        [
-        ['doch', 'jetzt', ...],
-        ...
-        ]
-        
-        [
-        ['but', 'now', ...],
-        ...
-        ]
-        
-        If sentences are already in sub-tokenized form, then max_len should be
-        512. Otherwise, sentence length might increase after bert tokenization.
-        (Bert has a max length of 512.)
-        """
+    with open(data_path) as sent_file:
         for i, line in enumerate(sent_file):
             if i >= max_sent:
                 break
-            
-            sent_1 = line[:line.index("|||")].split()
-            sent_2 = line[line.index("|||"):].split()[1:]
-            
-            if len(sent_1) > max_len or len(sent_2) > max_len:
-                bad_idx.append(i)
-            else:
-                sentences_1.append(sent_1)
-                sentences_2.append(sent_2)
-    
-    if align_path is None:
-        #return sentences_1, sentences_2, None
-        # encoding ENGLISH with both, BERT and OPUS-mt:
-        alignments = [   np.array([  [j,j] for j,_ in enumerate(sent)  ])   for sent  in sentences_1   ]
-        return sentences_1, sentences_1, alignments
-        
+            sent_1 = line.split()
+            sentences_1.append(sent_1)
 
-    
+    sentences_2 = []
+    with open(data_path_tgt) as sent_file:
+        for i, line in enumerate(sent_file):
+            if i >= max_sent:
+                break
+            sent_2 = line.split()
+            sentences_2.append(sent_2)
+ 
+    assert len(sentences_1) == len(sentences_2)
+
     alignments = []
     with open(align_path) as align_file:
         """Lines should be of the form
         0-0 1-1 2-4 3-2 4-3 5-5 6-6
         
         Only keeps 1-to-1 alignments.
-        
         Result:
         [
         [[0,0], [1,1], ...],
@@ -416,14 +516,30 @@ def load_align_corpus(sent_path, align_path, max_len = 64, max_sent = np.inf):
         for i, line in enumerate(align_file):
             if i >= max_sent:
                 break
+   
+            alignment = [pair.split('-') for pair in line.strip().split()]
+            alignment = np.array(alignment).astype(int)
+            alignment = keep_1to1(alignment)
             
-            if i not in bad_idx:
-                alignment = [pair.split('-') for pair in line.split()]
-                alignment = np.array(alignment).astype(int)
-                alignment = keep_1to1(alignment)
-                
-                alignments.append(alignment)
-                
+            alignments.append(alignment)
+            
+
+    nsents = len(sentences_1)
+
+    bad_idx = []
+
+    for i, (sent_1,sent_2,align) in enumerate(zip(sentences_1,sentences_2,alignments)):
+        if len(sent_1) > max_len or len(sent_2) > max_len or len(sent_1) < min_len or len(sent_2) < min_len or len(align) < 1:
+            bad_idx.append(i)
+ 
+    print(f'excluding {len(bad_idx)} sentences') #; with indexes: {bad_idx}')
+    for i, bad in enumerate(bad_idx):
+        #print(sentences_1[bad-i], sentences_2[bad-i], alignments[bad-i])
+        _, _, _ = sentences_1.pop(bad-i), sentences_2.pop(bad-i), alignments.pop(bad-i)
+    
+    assert len(sentences_1) == len(sentences_2)
+    assert nsents == len(sentences_1) + len(bad_idx)
+
     return sentences_1, sentences_2, alignments
     
 def partial_sums(arr):
@@ -467,8 +583,10 @@ def align_bert_multiple(
     epochs = 1,
     learning_rate = 0.00005, 
     learning_rate_warmup_frac = 0.1,
+    mu=0.25,
     outdir='./',
     log_every_n_batches=100,
+    devdata=None,
     ):
     # Adam hparams from Attention Is All You Need
     t0 = time.time()
@@ -490,8 +608,12 @@ def align_bert_multiple(
                 print("Warming up, iter {}/{}".format(iteration, learning_rate_warmup_steps))
             set_lr(iteration * warmup_coeff)
             
-    model_base.eval() # freeze and remember initial model # model_base should be the MT model for us
-    
+    # freeze and remember initial model
+    model_clone = deepcopy(model).to(model.device)
+    model_clone.eval() # freeze and remember the model initial model config 
+    model_base.eval() # freeze and remember the model that serves as anchor 
+
+    # model_clone.load_state_dict(copy.deepcopy(original_model.state_dict()))
     total_processed = 0
     for epoch in range(epochs):
         print(f'\n ...starting epoch {epoch+1}/{epochs}', flush=True) 
@@ -504,6 +626,8 @@ def align_bert_multiple(
                 ii = i % len(sent_1) # cyclic list - datasets may be diff sizes
                 ss_1, ss_2 = sent_1[ii:ii+batch_size], sent_2[ii:ii+batch_size]
                 aa = align[ii:ii+batch_size]
+                #for kk in aa[0]:    print(ss_1[0][kk[0]],ss_2[0][kk[1]])
+                #for kk in aa[1]:    print(ss_1[1][kk[0]],ss_2[0][kk[1]])
                 
                 # split batch to reduce memory usage
                 for k in range(0, len(ss_1), splitbatch_size):
@@ -513,15 +637,19 @@ def align_bert_multiple(
                     
                     # pick out aligned indices in a packed representation
                     idx_1, idx_2 = pick_aligned(s_1, s_2, a, False)
-                    
+                    assert len(idx_1) == len(idx_2)
                     # compute vectors for each position, pack the sentences
                     # result: packed_len x dim
-                    ann_1, ann_2 = model(s_1, False), model(s_2, False)
+                    ann_1 = model(s_1, False)
+                    ann_1_clone = model_clone(s_1, False)
                     ann_2_base = model_base(s_2, False)
                     
-                    loss_1 = F.mse_loss(ann_1[idx_1], ann_2_base[idx_2])
-                    loss_2 = F.mse_loss(ann_2, ann_2_base)
-                    loss_batch = loss_1 + loss_2
+
+                    #loss_1 = F.mse_loss(ann_1[idx_1], ann_2_base[idx_2])
+                    #loss_2 = F.mse_loss(ann_2, ann_2_base) 
+                    loss_1 = F.mse_loss(ann_1[idx_1], ann_2_base[idx_2]) # pull model embs towards model_base ones
+                    loss_2 = F.mse_loss(ann_1, ann_1_clone) # don't "forget" too easlily the original configuration 
+                    loss_batch = loss_1 + mu*loss_2
                     if loss is None: 
                         loss = loss_batch
                     else: 
@@ -535,9 +663,13 @@ def align_bert_multiple(
             trainer.step()
             trainer.zero_grad()
     
-    print(f'saving into: {outdir}/best_alignment_network.pt')            
-    torch.save({'state_dict': model.state_dict(),
-                'trainer' : trainer.state_dict(),}, f'{outdir}/best_alignment_network.pt')
+        # Validation routine
+        if devdata:
+            print("running validation routine...", flush=True)
+            print("Word retrieval accuracy before alignment:", evaluate_retrieval(devdata, model, model_base))
+        print(f'saving into: {outdir}/alignment_network_ckpt_{epoch}.pt', flush=True)            
+        torch.save({'state_dict': model.state_dict(),
+                      'trainer' : trainer.state_dict(),}, f'{outdir}/alignment_network_ckpt_{epoch}.pt')
 
 def normalize(vecs):
     norm = np.array([np.linalg.norm(vecs)])
@@ -574,13 +706,15 @@ def bestk_idx_CSLS(x, vecs, vec_hubness, k = 5):
     sim = 2 * vecs.dot(x) - vec_hubness
     return np.argsort(-sim)[:k]
 
-def evaluate_retrieval(dev, model):
+def evaluate_retrieval(dev, model, model2):
     sent_1, sent_2, align = dev
-    idx_1, idx_2 = pick_aligned(sent_1, sent_2, align)
+    cls_sep= False #if isinstance(model,(WordLevelOPUSmt)) else True
+    idx_1, idx_2 = pick_aligned(sent_1, sent_2, align, cls_sep)
     model.eval()
+    model2.eval()
     with torch.no_grad():
-        ann_1 = model(sent_1)[idx_1].detach().cpu().numpy()
-        ann_2 = model(sent_2)[idx_2].detach().cpu().numpy()
+        ann_1 = model(sent_1, False)[idx_1].detach().cpu().numpy()
+        ann_2 = model2(sent_2, False)[idx_2].detach().cpu().numpy()
     hub_1, hub_2 = hubness_CSLS(ann_1, ann_2)
     matches_1 = [bestk_idx_CSLS(ann, ann_2, hub_2)[0] for ann in ann_1]
     matches_2 = [bestk_idx_CSLS(ann, ann_1, hub_1)[0] for ann in ann_2]

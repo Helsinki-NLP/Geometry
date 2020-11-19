@@ -4,8 +4,10 @@ Contains functions to manage embedding representations
 import h5py
 import pickle
 import os
+
 from tqdm import tqdm
 from copy import deepcopy
+from collections import OrderedDict
 import torch
 import random
 
@@ -125,13 +127,25 @@ def average_selfsim_per_layer(w2s,embeddings):
 
     return avg_similarities
 
-def loadh5file(load_path):
+def loadh5file(load_path, numsents=-1, has_tgt=False):
     '''load embeddings and convert to list of tensors'''
 
-    logger.info('   loading from {0}'.format(load_path))
+    logger.info('  - Loading embeddings from {0}'.format(load_path))
     h5f = h5py.File(load_path, 'r')
-    setlen = len(h5f)
-    loaded_embs = [torch.FloatTensor(h5f.get(str(i))[()]) for i in range(setlen)]    
+    if numsents == -1:
+        setlen = len(h5f) 
+        loaded_embs = [torch.FloatTensor(h5f.get(str(i))[()]) for i in range(setlen)]    
+    else:
+        if has_tgt:
+            setlen = len(h5f) // 2
+            loaded_embs1 = [torch.FloatTensor(h5f.get(str(i))[()]) for i in range(numsents)] 
+            loaded_embs2 = [torch.FloatTensor(h5f.get(str(i))[()]) for i in range(setlen,numsents+setlen)] 
+            loaded_embs = loaded_embs1 + loaded_embs2 
+
+        else:
+            setlen = numsents 
+            loaded_embs = [torch.FloatTensor(h5f.get(str(i))[()]) for i in range(setlen)]    
+        
     h5f.close()
     # correct for sents of 1 token
     loaded_embs = [ emb.unsqueeze(1).detach() if len(emb.shape) == 2 else emb.detach() for emb in loaded_embs ] 
@@ -149,10 +163,19 @@ def saveh5file(outdir, fname, embeddings):
     return outfile   
 
 
-def BERT_compute_embeddings(samples, opt, bmodel):
+def BERT_compute_embeddings(samples, opt, bmodel, model_state_dict=None):
 
     # load model + tokenizer
     model = Loader.bertModel(bmodel, opt.cuda)
+    
+    if model_state_dict:
+        logger.info('     HUOM! Loading pre-aligned BERT\'s state_dict')
+        fsuffix=model_state_dict.get('modelname', '')
+        model_state_dict = model_state_dict.get('state_dict', None) 
+        model_state_dict = OrderedDict({k.replace('bert.',''):v for k,v in model_state_dict.items()})
+        # TODO: Decide what to do with the elements of the last layer (used to project BERT into the same dimension as MT models)
+        _, _ = model_state_dict.pop('linear.weight'), model_state_dict.pop('linear.bias')
+        model.model.load_state_dict(model_state_dict)
 
     #compute BERT embeddings
     bert_tokens, bert_tokenization =  model.tokenize(samples)
@@ -160,7 +183,8 @@ def BERT_compute_embeddings(samples, opt, bmodel):
     corrected_sentences, bert_encodings = model.correct_bert_tokenization(bert_encodings, bert_tokenization)
     
     # save embeddings 
-    fname = str(os.path.basename(opt.data_path[0]).split('.')[0])+'_'+str(bmodel)
+    fname0 = str(os.path.basename(opt.data_path[0]).split('.')[0])+'_'+str(bmodel)
+    fname = fname0 if not model_state_dict else f'{fname0}_{fsuffix}'
     outfile= fname if not opt.dev_params else f'{fname}_dev'
     bert_encodings_path = saveh5file(outdir=opt.outdir, fname=outfile, embeddings=bert_encodings)
     
@@ -169,31 +193,43 @@ def BERT_compute_embeddings(samples, opt, bmodel):
     corr_sents_path = f'{opt.outdir}/embeddings/{outfile}_tokd.pkl'
     pickle.dump(corrected_sentences, open(corr_sents_path,'wb'), protocol=pickle.HIGHEST_PROTOCOL)
     
-    return [corr_sents_path, bert_encodings_path]
+    return  {'embeddings':bert_encodings_path, 'tokd_sents':corr_sents_path}
+    #return [corr_sents_path, bert_encodings_path]
 
 
-def huggingface_compute_embeddings(samples, opt, hfmodel):
+def huggingface_compute_embeddings(samples, opt, hfmodel, model_state_dict=None):
     # load model + tokenizer
     model = Loader.huggingfaceModel(hfmodel, opt.cuda)
+    if model_state_dict:
+        logger.info(f'   HUOM! Loading pre-aligned {hfmodel}\'s state_dict')
+        fsuffix=model_state_dict.get('modelname', '')
+        model_state_dict = model_state_dict.get('state_dict', None) 
+        model_state_dict = OrderedDict({k.replace('mt_model.',''):v for k,v in model_state_dict.items()})
+        model.model.load_state_dict(model_state_dict)
 
+        
     #compute embeddings    
     hf_tokd, hf_encodings =  model(samples)
     corrected_sentences, hf_encodings = model.correct_tokenization(hf_tokd, hf_encodings)
     
     # save embeddings
-    fname = str(os.path.basename(opt.data_path[0]).split('.')[0])+'_'+str(os.path.basename(hfmodel))
+    fname0 = str(os.path.basename(opt.data_path[0]).split('.')[0])+'_'+str(os.path.basename(hfmodel))
+    fname = fname0 if not model_state_dict else f'{fname0}_{fsuffix}'
     outfile= fname if not opt.dev_params else f'{fname}_dev'
     hf_encodings_path = saveh5file(outdir=opt.outdir, fname=outfile, embeddings=hf_encodings)
 
     # save sentences
-    logger.info('   saving tokenized sentences to {0}'.format(f'{opt.outdir}/{outfile}_tokd.pkl'))
+    logger.info('   saving tokenized sentences to {0}'.format(f'{opt.outdir}/embeddings/{outfile}_tokd.pkl'))
     corr_sents_path = f'{opt.outdir}/embeddings/{outfile}_tokd.pkl'
     pickle.dump(corrected_sentences, open(corr_sents_path,'wb'), protocol=pickle.HIGHEST_PROTOCOL)
     
-    return [corr_sents_path, hf_encodings_path]
+    return  {'embeddings':hf_encodings_path, 'tokd_sents':corr_sents_path}
+    #return [corr_sents_path, hf_encodings_path]
 
 
-def load_embeddings(paths):
+
+
+def load_embeddings(paths, nsents=-1):
     '''
     loads embeddings 
     INPUT:
@@ -204,19 +240,19 @@ def load_embeddings(paths):
 
     '''
     # load embeddings
-    for path in paths:
-        extension=os.path.basename(path).split('.')[1]
-        if extension == 'h5':
-            embeddings = loadh5file(path)
-        elif extension == 'pkl':
-            logger.info(f'Loading tokenized sentences from {os.path.splitext(path)[0]}_tokd.pkl') 
-            toks = pickle.load(open(path,'br'))
+    path1 = paths.get('tokd_sents')
+    logger.info(f'  - Loading tokenized sentences from {path1}') 
+    toks = pickle.load(open(path1,'br'))
+    if not nsents == -1:
+        toks = {k:v[:nsents] for k,v in toks.items()}
     
+    path2 = paths.get('embeddings')
+    embeddings = loadh5file(path2, nsents, toks.get('target',False))
 
     return [toks, embeddings]
 
 
-def compute_embeddings(opt, samples):
+def compute_embeddings(opt, samples):   
     '''
     computes embeddings and saves them later on to use loads_embeddings 
     if --load_embeddings_path is given, then only calls load_embeddings
@@ -224,69 +260,103 @@ def compute_embeddings(opt, samples):
 
     INPUT:
         - opt
-        - samples[list]: 1 sentece per list entry
+        - samples:list - 1 sentece per list entry
     OUTPUT:
-        - all_embeddings_paths[dict[modelname:embeddings]]: dictionary with paths where embeddings where written
-                                                            if  args.load_embeddings_path=None, then it is to be overwritten 
+        - toks_and_embeddings_paths:dict[modelname:str : embeddings:torch.Tensor] - dictionary with paths where embeddings where saved
+                                                        
 
     '''
     toks_and_embeddings_paths={}
     
-    if not opt.load_embeddings_path:
-
-        # compute embeddings using BERT
-        if not (opt.bert_models[0]=='None'):
-            logger.info('BERT models:')
-            for i, bmodel in enumerate(opt.bert_models):
-                logger.info(' [{0}] {1} embeddings: computing & saving embeddings'.format(i, bmodel))
-                if isinstance(samples,tuple):
-                    used_paths = BERT_compute_embeddings(deepcopy(samples[0]), opt, bmodel)
-                else:
-                    used_paths = BERT_compute_embeddings(deepcopy(samples), opt, bmodel)
-                
-                fname = os.path.basename(used_paths[0]).split('.')[0]
-                toks_and_embeddings_paths[fname] = used_paths
-        
-        # compute embeddings using HUGGINGFACE models
-        if not (opt.huggingface_models[0]=='None'):
-            logger.info('HUGGINGFACE models:')
-
-            for i, hfmodel in enumerate(opt.huggingface_models):
-                srclang, tgtlang = hfmodel.split('-')
-                logger.info(f' [{i}] Helsinki-NLP/opus-mt-{srclang}-{tgtlang} embeddings: computing & saving embeddings')
-                used_paths= huggingface_compute_embeddings(deepcopy(samples),opt,f'Helsinki-NLP/opus-mt-{srclang}-{tgtlang}')
-                fname=os.path.basename(used_paths[0]).split('.')[0]
-                toks_and_embeddings_paths[fname] = used_paths
-
-                if isinstance(samples,tuple):
-                    logger.info(f' [{i}] Helsinki-NLP/opus-mt-{tgtlang}-{srclang} embeddings: computing & saving embeddings')
-                    samples2=(samples[1],samples[0]) 
-                    used_paths = huggingface_compute_embeddings(deepcopy(samples2),opt,f'Helsinki-NLP/opus-mt-{tgtlang}-{srclang}')
-                    fname=os.path.basename(used_paths[0]).split('.')[0]
-                    toks_and_embeddings_paths[fname] = used_paths
-    
-    else:
-        # emulate the dictionary formed above, with the arguments passed in --load_embeddings_path
-        for path in opt.load_embeddings_path:
-            if os.path.isdir(path):
-                for file in os.listdir(path):
-                    if os.path.isfile(path+'/'+file):
-                        fname, extension = os.path.basename(file).split('.')
-                        if extension == 'h5':
-                            embeddings_path = f'{path}/{file}'
-                        if extension == 'pkl':
-                            logger.info('   loading from {0}'.format(f'{path}/{file}'))
-                            toks_path = f'{path}/{file}'
-
-                        toks_and_embeddings_paths[fname] = [embeddings_path, toks_path]
+    # compute embeddings using prealigned models
+    if not (opt.prealigned_models[0]=='None'):
+        logger.info('Pre-aligned models:')
+        for mpath, mtype in zip(opt.prealigned_models, opt.prealigned_model_types): 
+            #prealigned_compute_embeddings(samples, )
+            device='cuda' if opt.cuda else 'cpu'
+            model_state_dict = torch.load(mpath, map_location=torch.device(device))
+            modelname=os.path.basename(os.path.dirname(mpath))
+            model_state_dict.update(modelname=modelname.replace('_',''))
+            if 'bert' in mtype:
+                bsamples = deepcopy(samples[0]) if isinstance(samples,tuple) else deepcopy(samples)
+                model_type = 'bert-base-cased' # change this!
+                used_paths = BERT_compute_embeddings(bsamples, opt, bmodel=model_type, model_state_dict=model_state_dict)
             else:
-                fname = os.path.basename(path).split('.')[0]
-                embeddings_path = path
-                toks_path = f'{os.path.splitext(path)[0]}_tokd.pkl'
+                srclang, tgtlang = mtype.split('-')
+                used_paths= huggingface_compute_embeddings(deepcopy(samples),opt, hfmodel=f'Helsinki-NLP/opus-mt-{srclang}-{tgtlang}', model_state_dict=model_state_dict)
+            
+            fname = os.path.basename(used_paths['embeddings']).split('.')[0]
+            toks_and_embeddings_paths[fname] = used_paths
+         
+        return toks_and_embeddings_paths
+            
 
-                toks_and_embeddings_paths[fname] = [embeddings_path, toks_path]
 
+    # compute embeddings using BERT
+    if not (opt.bert_models[0]=='None'):
+        logger.info('BERT models:')
+        for i, bmodel in enumerate(opt.bert_models):
+            logger.info(' [{0}] {1} embeddings: computing & saving embeddings'.format(i, bmodel))
+            bsamples = deepcopy(samples[0]) if isinstance(samples,tuple) else deepcopy(samples)
+            used_paths = BERT_compute_embeddings(bsamples, opt, bmodel)
+            
+            fname = os.path.basename(used_paths['embeddings']).split('.')[0]
+            toks_and_embeddings_paths[fname] = used_paths
+    
+    # compute embeddings using HUGGINGFACE models
+    if not (opt.huggingface_models[0]=='None'):
+        logger.info('HUGGINGFACE models:')
 
-        
+        for i, hfmodel in enumerate(opt.huggingface_models):
+            srclang, tgtlang = hfmodel.split('-')
+            logger.info(f' [{i}] Helsinki-NLP/opus-mt-{srclang}-{tgtlang} embeddings: computing & saving embeddings')
+            used_paths= huggingface_compute_embeddings(deepcopy(samples),opt,f'Helsinki-NLP/opus-mt-{srclang}-{tgtlang}')
+            fname = os.path.basename(used_paths['embeddings']).split('.')[0]
+            toks_and_embeddings_paths[fname] = used_paths
+
+            if isinstance(samples,tuple):
+                logger.info(f' [{i}] Helsinki-NLP/opus-mt-{tgtlang}-{srclang} embeddings: computing & saving embeddings')
+                samples2=(samples[1],samples[0]) 
+                used_paths = huggingface_compute_embeddings(deepcopy(samples2),opt,f'Helsinki-NLP/opus-mt-{tgtlang}-{srclang}')
+                fname = os.path.basename(used_paths['embeddings']).split('.')[0]
+                toks_and_embeddings_paths[fname] = used_paths
+
+    return toks_and_embeddings_paths
+
+def emul_compute_embeddings(opt):
+    '''
+    emulate the dictionary formed in compute_embeddings 
+    OUT:
+     toks_and_embeddings_paths:dict[modelname:str : embeddings:torch.Tensor] - dictionary with paths where embeddings where saved
+
+    '''
+    toks_and_embeddings_paths={}
+    
+
+   
+    for path in opt.load_embeddings_path:
+        if os.path.isdir(path):
+            for file in os.listdir(path):
+                fname, extension = os.path.basename(file).split('.')
+                fname = fname.strip('_tokd')
+                tmpdict = toks_and_embeddings_paths.get(fname,{})
+                if extension == 'h5':
+                    embeddings_path = f'{path}/{file}'
+                    tmpdict.update(embeddings = embeddings_path)
+
+                if extension == 'pkl':
+                    #logger.info('   loading from {0}'.format(f'{path}/{file}'))
+                    toks_path = f'{path}/{file}'
+                    tmpdict.update(tokd_sents = toks_path)
+            
+                toks_and_embeddings_paths[fname] = tmpdict
+                
+        else:
+            fname = os.path.basename(path).split('.')[0]
+            fname = fname.strip('_tokd')
+            embeddings_path = path
+            toks_path = f'{os.path.splitext(path)[0]}_tokd.pkl'
+
+            toks_and_embeddings_paths[fname] = {'embeddings':embeddings_path, 'tokd_sents':toks_path}
 
     return toks_and_embeddings_paths

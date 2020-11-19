@@ -255,6 +255,7 @@ export BS=32
 loadfrom=/scratch/project_2001970/Geometry/BertMThybrid/testoutput/simpleTrainer_with_alignment/en-${tgtlang}
 loadfrom2=/scratch/project_2001970/Geometry/BertMThybrid/testoutput/simpleTrainer_without_alignment/en-${tgtlang}
 
+# TRANSLATE mustc_testset
 srun --account=project_2001970 --time=02:30:00 --mem-per-cpu=12G --partition=gpu --gres=gpu:v100:1,nvme:16 \
 python BertMT_hybrid_simpletrain.py --do_predict \
         --data_dir $DATA_DIR \
@@ -267,3 +268,20 @@ python BertMT_hybrid_simpletrain.py --do_predict \
                                     ${loadfrom}/frozenMTdecoder_and_BERTembLayer/best_finetuned_network.pt \
                                     ${loadfrom2}/best_finetuned_network.pt \
                                     ${loadfrom2}/non_pretrained_decoder/best_finetuned_network.pt 
+
+
+# TRANSLATE newstest2014
+DATA_DIR=/scratch/project_2001970/Geometry/en_de_newstest
+srun --account=project_2001970 --time=02:30:00 --mem-per-cpu=12G --partition=gpu --gres=gpu:v100:1,nvme:16 \
+python BertMT_hybrid_simpletrain.py --do_predict \
+        --data_dir $DATA_DIR \
+        --test_batch_size $BS \
+        --load_pretrained_BertMT_path ${loadfrom}/best_finetuned_network.pt \
+                                    ${loadfrom}/frozenBERT/best_finetuned_network.pt \
+                                    ${loadfrom}/frozenBERT_and_MTembLayer/best_finetuned_network.pt \
+                                    ${loadfrom}/frozen_embLayers/best_finetuned_network.pt \
+                                    ${loadfrom}/frozenMTdecoder/best_finetuned_network.pt \
+                                    ${loadfrom}/frozenMTdecoder_and_BERTembLayer/best_finetuned_network.pt \
+                                    ${loadfrom2}/best_finetuned_network.pt \
+                                    ${loadfrom2}/non_pretrained_decoder/best_finetuned_network.pt > /projappl/project_2001970/Geometry/logs2/eval_newstest2014.out 2> /projappl/project_2001970/Geometry/logs2/eval_newstest2014.err
+

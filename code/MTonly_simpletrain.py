@@ -32,6 +32,14 @@ def report_metrics(metrics, type_path):
         #if 'target' in metrics[type_path][-1].keys():
         pred_metrics.update(targets=metrics[type_path][-1].pop('target'))
         save_json(pred_metrics, metrics_save_path.with_name('latest_gen_utterances.json'))
+        with open(metrics_save_path.with_name('preds.txt'),'w') as f:
+            for sent in pred_metrics['preds']:  
+                f.write(sent) 
+                f.write('\n')
+        with open(metrics_save_path.with_name('targets.txt'),'w') as f:
+            for sent in pred_metrics['targets']:  
+                f.write(sent) 
+                f.write('\n')
 
     print(type_path, metrics[type_path][-1],flush=True)
     print('')    
@@ -222,7 +230,6 @@ def main(args):
     # load data
     dataset_kwargs: dict = dict(
             data_dir=args.data_dir,
-            max_source_length=args.max_source_length,
             prefix=MODEL.config.prefix or "",
         )
 
@@ -423,7 +430,7 @@ export BS=16
 
 
 
-# TEST
+# only TEST (mustc testset)
 srun --account=project_2001970 --time=00:15:00 --mem-per-cpu=20G --partition=gputest --gres=gpu:v100:1,nvme:16 \
     python MTonly_simpletrain.py \
         --do_predict \
@@ -431,6 +438,18 @@ srun --account=project_2001970 --time=00:15:00 --mem-per-cpu=20G --partition=gpu
         --test_max_target_length $MAX_LEN \
         --test_batch_size $BS \
         --gpus 1 \
+        --output_dir ./outputs/MTonly_mustc \
+        --mt_mname ${MODELNAME}
+
+# only TEST (newstest2014)
+srun --account=project_2001970 --time=00:15:00 --mem-per-cpu=20G --partition=gputest --gres=gpu:v100:1,nvme:16 \
+    python MTonly_simpletrain.py \
+        --do_predict \
+        --data_dir ${DATA_DIR}_newstest \
+        --test_max_target_length $MAX_LEN \
+        --test_batch_size $BS \
+        --gpus 1 \
+        --output_dir ./outputs/MTonly_newstest \
         --mt_mname ${MODELNAME}
 
 # FINE-TUNE

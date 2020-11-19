@@ -2,7 +2,6 @@ import argparse
 from pathlib import Path                                                
 import pytorch_lightning as pl
 import numpy as np
-import numpy as np
 import torch                                                            
 import time
 import transformers                                                     
@@ -89,17 +88,19 @@ def load_4_aligning(
         return sentences_1, sentences_1, alignments
 
 
-#model = reload_model()                                                 
+#model = reload_model()
 def do_finetuning_alignment(
     model,
     model_base,
-    num_sent=200000, 
+    data_dir,
+    num_sent=50000, 
     bsz=16, 
     num_epochs=10,
     sent_path=None,
     align_path=None,
     outdir='./',
     log_every_n_batches=100,
+    validate_alignment=False,
      ):
     '''
     Align embeddings of model with the embeddings of model_base using Cao's alignment method
@@ -114,18 +115,23 @@ def do_finetuning_alignment(
     OUT:
         - aligned_state_dict [OrderedDict]: statedict of a BER model with new parameters
     '''
-    from utils.FTalignment import WordLevelBert, WordLevelOPUSmt, align_bert_multiple
+    from utils.FTalignment import WordLevelBert, WordLevelOPUSmt, align_bert_multiple, evaluate_retrieval
     import gc
     print(f'Running alignment routine:')
     print(f'        embeddings from model \"{model}\" are to be aligned with the ones from model \"{model_base}\" ')
-    print(f'        using {num_sent} sentences, for {num_epochs} epochs \n')
+    print(f'        using {num_sent} sentences, for {num_epochs} epochs ')
+    print(f'        checkpoints will be saved to  {outdir}/alignment_network_ckpt_XX.pt \n', flush=True)
 
     
     model_base = WordLevelOPUSmt(model_base) # this should be the MT model for us
-    model = WordLevelBert(model, False, model_base.dim) # this is the one that will have the parameters updated
+    model = WordLevelBert(model, do_lower_case=False, outdim=model_base.dim) # this is the one that will have the parameters updated
 
-    data = load_4_aligning(f'{args.data_dir}/train.source', max_sent = num_sent)
-    #data = [load_align_corpus(sent_path, align_path, max_sent = num_sent) for sent_path, align_path in zip(sent_paths, align_paths)]
+    data = load_4_aligning(f'{data_dir}/trainalignment.source', max_sent = num_sent)
+    dev = None
+    if validate_alignment:
+        dev = load_4_aligning(f'{data_dir}/val.source')
+        print("Word retrieval accuracy before alignment:", evaluate_retrieval(dev, model, model_base), flush=True)
+
     train = [data]#(sent_1, sent_2, align) for sent_1, sent_2, align in data]
     align_bert_multiple(
         train, 
@@ -136,7 +142,8 @@ def do_finetuning_alignment(
         batch_size=bsz, 
         epochs=num_epochs, 
         outdir=outdir,
-        log_every_n_batches=log_every_n_batches
+        log_every_n_batches=log_every_n_batches,
+        devdata=dev
     )
    
     #free memory
@@ -190,13 +197,15 @@ def main(args):
 
         if args.do_align: 
             alignedBERT_state_dict = do_finetuning_alignment(
-                    model=args.bert_type,
-                    model_base=args.mt_mname,
-                    num_sent=args.num_sents_align,
-                    num_epochs=args.num_epochs_align,
-                    outdir=args.output_dir ,
-                    log_every_n_batches=args.log_every_n_align
-                )
+                model=args.bert_type,
+                model_base=args.mt_mname,
+                data_dir = args.data_dir,
+                num_sent=args.num_sents_align,
+                num_epochs=args.num_epochs_align,
+                outdir=args.output_dir ,
+                log_every_n_batches=args.log_every_n_align,
+                validate_alignment=args.validate_alignment,
+            )
 
         #model = BertSimpleTranslator(args)
         model = BertTranslator(args) 
@@ -265,7 +274,9 @@ if __name__ == "__main__":
     parser = BertTranslator.add_model_specific_args(parser) 
     
     parser.add_argument("--do_align", action="store_true", help="Whether to run Cao's alignment method before training.")
+    parser.add_argument("--validate_alignment", action="store_true", help="If active, will use val.source from --data_dir to validate alignment method.")
     parser.add_argument("--num_sents_align", type=int, default=200000, help="Number of sentences used in Cao's alignment method.")
+    parser.add_argument("--num_sents_evalalign", type=int, default=10000, help="Number of sentences to validate Caos' alignment method.")
     parser.add_argument("--num_epochs_align", type=int, default=10, help="Number of epochs for learning Cao's alignment method.")
     parser.add_argument("--log_every_n_align", type=int, default=100, help="How often to report results when doing Cao's alignment method.") 
     parser.add_argument("--load_aligned_BERT_path", type=str, help="Path to an aligned Bert state_dict.")

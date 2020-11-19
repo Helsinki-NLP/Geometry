@@ -28,6 +28,8 @@ class bertModel(nn.Module):
         config = BertConfig.from_pretrained(bert_type, output_hidden_states=True)
         self.model = BertModel.from_pretrained(bert_type, config=config)
         
+        self.max_sent_len = self.model.config.max_position_embeddings
+
         device='cuda' if cuda else 'cpu'
         self.device = device      
         self.model.eval()
@@ -44,14 +46,20 @@ class bertModel(nn.Module):
         tokenized_sentences = []
         tokens_tensors = []
         for i in range(len(sentences)):
-            # add BERT tags
+            # add BERT tags                
             sentences[i] = '[CLS] ' + sentences[i] + ' [SEP]'
-            tokenized_sentences.append(self.tokenizer.tokenize(sentences[i]))
+            tokd_sent = self.tokenizer.tokenize(sentences[i])
+            # truncate sentences longer than self.max_sent_length (bert crashes otherwise) 
+            if len(tokd_sent) > self.max_sent_len:
+                tokd_sent = tokd_sent[:self.max_sent_len-1]+[tokd_sent[-1]]
             
             # Convert token to vocabulary indices
-            indexed_tokens = self.tokenizer.convert_tokens_to_ids(tokenized_sentences[i])
+            indexed_tokens = self.tokenizer.convert_tokens_to_ids(tokd_sent)
+            
             # Convert inputs to PyTorch tensors
             tokens_tensor = torch.tensor([indexed_tokens])
+            # Prepare outputs
+            tokenized_sentences.append(tokd_sent)
             tokens_tensors.append(tokens_tensor)
         
 

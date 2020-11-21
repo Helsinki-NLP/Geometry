@@ -3,7 +3,7 @@
 USAGE: source getSTSdb.sh <path/to/moses>
 '''
 
-MOSES=$1
+MOSES=${1:-"../mosesdecoder/scripts/"}
 
 #STS datasets: STS12, STS13, STS14, STS15, STS16
 mkdir -p  data/STS

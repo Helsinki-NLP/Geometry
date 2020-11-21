@@ -332,6 +332,7 @@ class BertTranslator(pl.LightningModule):
             **kwargs
         )
         self.hparams = args
+        self.batch_size = self.hparams.train_batch_size
         self.step_count = 0
         self.metrics = defaultdict(list)
         self.metrics_save_path = Path(self.hparams.output_dir) / "metrics.json"
@@ -430,13 +431,13 @@ class BertTranslator(pl.LightningModule):
     def total_steps(self) -> int:
         """The number of total training steps that will be run. Used for lr scheduler purposes."""
         num_devices = max(1, self.hparams.gpus)  
-        effective_batch_size = self.hparams.train_batch_size * self.hparams.accumulate_grad_batches * num_devices
+        effective_batch_size = self.batch_size * self.hparams.accumulate_grad_batches * num_devices
         dataset_size = len(self.train_loader.dataset)
         return (dataset_size / effective_batch_size) * self.hparams.max_epochs
 
     def setup(self, mode):
         if mode == "fit":
-            self.train_loader = self.get_dataloader("train", self.hparams.train_batch_size, shuffle=True)
+            self.train_loader = self.get_dataloader("train", self.batch_size, shuffle=True)
 
     def _step(self, batch: dict, training=True) -> Tuple:
         
@@ -573,9 +574,9 @@ class BertTranslator(pl.LightningModule):
         return dataloader
 
     def train_dataloader(self) -> DataLoader:
-        dataloader = self.get_dataloader("train", batch_size=self.hparams.train_batch_size, shuffle=True)
+        dataloader = self.get_dataloader("train", batch_size=self.batch_size, shuffle=True)
         t_total = (
-            (len(dataloader.dataset) // (self.hparams.train_batch_size * max(1, self.hparams.gpus)))
+            (len(dataloader.dataset) // (self.batch_size * max(1, self.hparams.gpus)))
             // self.hparams.accumulate_grad_batches
             * float(self.hparams.max_epochs)
         )
@@ -588,10 +589,10 @@ class BertTranslator(pl.LightningModule):
         return dataloader
 
     def val_dataloader(self) -> DataLoader:
-        return self.get_dataloader("val", batch_size=self.hparams.eval_batch_size)
+        return self.get_dataloader("val", batch_size=self.batch_size)
 
     def test_dataloader(self) -> DataLoader:
-        return self.get_dataloader("test", batch_size=self.hparams.eval_batch_size)
+        return self.get_dataloader("test", batch_size=self.batch_size)
 
     @staticmethod
     def add_model_specific_args(parser):

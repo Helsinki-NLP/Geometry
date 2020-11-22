@@ -163,6 +163,15 @@ def report_metrics(metrics, type_path):
                     }
         save_json(pred_metrics, metrics_save_path.with_name('latest_gen_utterances.json'))
     
+        with open(metrics_save_path.with_name('preds.txt'),'w') as f:
+            for sent in pred_metrics['preds']:  
+                f.write(sent) 
+                f.write('\n')
+        with open(metrics_save_path.with_name('targets.txt'),'w') as f:
+            for sent in pred_metrics['targets']:  
+                f.write(sent) 
+                f.write('\n')
+
     if not type_path == 'val':
         for old_key in metrics[type_path][-1].keys():
             new_key = type_path.join(old_key.split('val')) if 'val' in old_key else old_key
@@ -547,6 +556,7 @@ def main(args):
 
         
         # VALIDATION
+        """
         print(f'Running validation for the {val_stepcount}-th time')
         model.eval()
         base_metrics = val_routine(
@@ -560,7 +570,7 @@ def main(args):
             )
         allmetrics['val'].append(base_metrics)
         report_metrics(allmetrics, 'val')
-        
+        """
         print('\n\nStarting train+validation routine', flush=True)
         # --------------------------
         # TRAIN and VALIDATION loop
@@ -630,9 +640,9 @@ def main(args):
                     model.train()
             # logging
             print(f'Epoch {epoch+1}, train_loss: {torch.tensor(losses).mean():3f}', flush=True)
-            print(f'saving into: {outdir}/alignment_network_ckpt_{epoch}.pt', flush=True)            
+            print(f'saving into: {args.output_dir}/alignment_network_ckpt_{epoch}.pt', flush=True)            
             torch.save({'state_dict': model.state_dict(),
-                      'trainer' : trainer.state_dict(),}, f'{outdir}/finetune_network_ckpt_{epoch}.pt')
+                      'optimizer' : optimizer.state_dict(),}, f'{args.output_dir}/finetune_network_ckpt_{epoch}.pt')
            
         print(f'saving into: {args.output_dir}/best_alignment_network.pt')            
         torch.save({'state_dict': model.state_dict(),
@@ -715,18 +725,18 @@ if __name__ == "__main__":
     parser.add_argument("--load_aligned_BERT_path", type=str, help="Path to an aligned Bert state_dict.")
     parser.add_argument("--load_pretrained_BertMT_path", type=str, nargs='+', help="Path to a BertMT hybrid model state_dict.")
     
-    parser.add_argument("--freeze_decoder", action="store_true", help="freeze decoder parameters during FTing.")
-    parser.add_argument("--freeze_bert", action="store_true", help="freeze BERT parameters during FTing.")
-    parser.add_argument("--freeze_embeddings", action="store_true", help="freeze embedding layer parameters during FTing.")
+    #parser.add_argument("--freeze_decoder", action="store_true", help="freeze decoder parameters during FTing.")
+    #parser.add_argument("--freeze_bert", action="store_true", help="freeze BERT parameters during FTing.")
+    #parser.add_argument("--freeze_embeddings", action="store_true", help="freeze embedding layer parameters during FTing.")
     parser.add_argument("--reinit_decoder", action="store_true", help="random re-initialization of the MT decoder parameters.")
     
     args = parser.parse_args() 
     #args.gpus=0  
     print(f'train bsz: {args.train_batch_size}, eval bsz: {args.eval_batch_size}, test bsz: {args.test_batch_size}')          
     
-    import ipdb
-    with ipdb.launch_ipdb_on_exception():                                             
-        main(args)
+    #import ipdb
+    #with ipdb.launch_ipdb_on_exception():                                             
+    #    main(args)
     main(args)
 
 

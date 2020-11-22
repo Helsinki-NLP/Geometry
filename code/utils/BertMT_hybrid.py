@@ -143,8 +143,13 @@ class BertMT_hybrid(PreTrainedModel):
                 
         bert_encoded_sentences = self.bert_tokenizer(src_texts, padding=True, return_tensors='pt')
         mt_encoded_sentences = self.mt_tokenizer.prepare_seq2seq_batch(src_texts=src_texts, tgt_texts=tgt_texts)
-
-
+        
+        if bert_encoded_sentences['input_ids'].size(1) >= 300:
+            print(src_texts)
+            print(tgt_texts)
+            
+        #if bert_encoded_sentences['input_ids'].size():
+        #    pass
         # overwrite some parameters_
         mt_encoded_sentences['MT_input_ids'] = mt_encoded_sentences['input_ids']
         mt_encoded_sentences['MT_attention_mask'] = mt_encoded_sentences['attention_mask']
@@ -334,6 +339,8 @@ class BertTranslator(pl.LightningModule):
         self.hparams = args
         self.batch_size = self.hparams.train_batch_size
         self.step_count = 0
+        self.predictions=list()
+        self.targets=list()
         self.metrics = defaultdict(list)
         self.metrics_save_path = Path(self.hparams.output_dir) / "metrics.json"
         self.hparams_save_path = Path(self.hparams.output_dir) / "hparams.pkl"
@@ -471,7 +478,7 @@ class BertTranslator(pl.LightningModule):
 
         return (loss,)
 
-    def _generative_step(self, batch: dict) -> dict:
+    def _generative_step(self, batch: dict, return_val_predictions:bool=False) -> dict:
         t0 = time.time()
         generated_ids = self.model.generate(
             batch["input_ids"],
@@ -489,6 +496,11 @@ class BertTranslator(pl.LightningModule):
         rouge: Dict = self.calc_generative_metrics(preds, target)
         summ_len = np.mean(lmap(len, generated_ids))
         base_metrics.update(gen_time=gen_time, gen_len=summ_len, preds=preds, target=target, **rouge)
+        if return_val_predictions:
+            print('preds&targets')
+            self.predictions += preds
+            self.targets += target
+            base_metrics.update(preds=self.predictions, target=self.targets)
         return base_metrics
 
     @property
@@ -501,8 +513,24 @@ class BertTranslator(pl.LightningModule):
         
     def save_metrics(self, latest_metrics, type_path) -> None:
         latest_metrics = {k:v.cpu().tolist() if isinstance(v,torch.Tensor) else v for k,v in latest_metrics.items() }
+        #print(latest_metrics.keys(),type_path)
+        if len(self.predictions) > 0:
+            pred_metrics = {'STEP':latest_metrics['step_count'], 
+                           'preds':self.predictions,
+                         'targets':self.targets  }
+            save_json(pred_metrics, self.metrics_save_path.with_name('latest_gen_utterances.json'))
+            with open(self.metrics_save_path.with_name('preds.txt'),'w') as f:
+                for sent in pred_metrics['preds']:
+                    f.write(sent)
+                    f.write('\n')
+            with open(self.metrics_save_path.with_name('targets.txt'),'w') as f:
+                for sent in pred_metrics['targets']:
+                    f.write(sent)
+                    f.write('\n')
+
         self.metrics[type_path].append(latest_metrics)
         save_json(self.metrics, self.metrics_save_path)
+
 
     def calc_generative_metrics(self, preds, target) -> dict:
         return calculate_bleu(preds, target)
@@ -524,7 +552,11 @@ class BertTranslator(pl.LightningModule):
         return metrics
 
     def test_step(self, batch, batch_idx):
-        return self._generative_step(batch)
+        metrics = self._generative_step(batch, return_val_predictions=True)
+        self.log('avg_gen_len', metrics['gen_len'], on_step=True, prog_bar=True)
+        self.log('avg_bleu', metrics['bleu'], on_step=True, prog_bar=True)
+        
+        return metrics
 
     def validation_epoch_end(self, outputs, prefix="val") -> Dict:
         self.step_count += 1
@@ -540,7 +572,7 @@ class BertTranslator(pl.LightningModule):
         preds = flatten_list([x["preds"] for x in outputs])
 
     def test_epoch_end(self, outputs):
-        return self.validation_end(outputs, prefix="test")
+        return self.validation_epoch_end(outputs, prefix="test")
 
     def get_dataset(self, type_path) -> Seq2SeqDataset:
         n_obs = self.n_obs[type_path]

@@ -244,7 +244,7 @@ def main(args):
         **train_params, 
     ) 
     
-    trainer.tune(model)
+    #trainer.tune(model)
 
     trainer.fit(model) 
     print(f'trainer.tested_ckpt_path: {trainer.tested_ckpt_path}')

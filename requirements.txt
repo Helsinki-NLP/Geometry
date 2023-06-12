@@ -1,7 +1,7 @@
 ipdb
 pytorch-lightning
 argparse==1.4.0
-transformers==3.2.0
+transformers==4.30.0
 rouge_score
 sacrebleu
 pytorch-pretrained-bert==0.6.2
